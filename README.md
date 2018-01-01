@@ -35,11 +35,11 @@ spec:
 
 ```
 
-Then updated it with a definition similar to the following `kubectl
-apply -f service.yaml` to update that service, with LLB running
-outside the cluster the accessible port will be a *NodePort*. That
-NodePort will be the upstream *sink* add a new external port using the kubernetes inserted
-NodePort value as the destination
+Then update  it with  a definition similar  to the  following `kubectl
+apply  -f  service.yaml` to  update  that  service, with  LLB  running
+outside  the  cluster the  accessible  port  will  be a  *Port*.  That
+NodePort will be the upstream *sink* add a new external port using the
+kubernetes inserted NodePort value as the destination
 
 ```
 # ------------------------- Service ------------------------- #
@@ -58,3 +58,6 @@ spec:
     name: echo
   type: LoadBalancer
 ```
+
+Now you can `curl loadbalancerIP:8888` where loadbalancerIP is the
+host the loadbalancer is running on.
