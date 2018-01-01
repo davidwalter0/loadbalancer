@@ -1,4 +1,4 @@
-package main
+package ipmgr
 
 import (
 	"fmt"
@@ -17,9 +17,11 @@ import (
 
 var monitor = mutex.NewMonitor()
 
-type ManagedIP map[string]*netlink.Addr
+// LoadBalancerIPs load balancer IPs
+type LoadBalancerIPs map[string]*netlink.Addr
 
-func (mips *ManagedIP) RemoveAddr(IPNet string) {
+// RemoveAddr from networks
+func (mips *LoadBalancerIPs) RemoveAddr(IPNet string) {
 	defer monitor()()
 	if addr, ok := (*mips)[IPNet]; ok {
 		link, _ := netlink.LinkByName(addr.Label)
@@ -28,7 +30,8 @@ func (mips *ManagedIP) RemoveAddr(IPNet string) {
 	}
 }
 
-func (mips *ManagedIP) AddAddr(IPNet, device string) {
+// AddAddr adds an address to a network device
+func (mips *LoadBalancerIPs) AddAddr(IPNet, device string) {
 	defer monitor()()
 	if addr, ok := (*mips)[IPNet]; !ok {
 		link, _ := netlink.LinkByName(device)
@@ -38,27 +41,32 @@ func (mips *ManagedIP) AddAddr(IPNet, device string) {
 	}
 }
 
-func (mips *ManagedIP) keys() (IPNets []string) {
+// keys of managed ip map | not thread safe
+func (mips *LoadBalancerIPs) keys() (IPNets []string) {
 	for key := range *mips {
 		IPNets = append(IPNets, key)
 	}
 	return
 }
 
-func (mips *ManagedIP) Keys() (IPNets []string) {
+// Keys of managed ip map | thread safe
+func (mips *LoadBalancerIPs) Keys() (IPNets []string) {
 	defer monitor()()
 	return mips.keys()
 }
 
-func (mips *ManagedIP) String() string {
+// String from managed ip map | thread safe
+func (mips *LoadBalancerIPs) String() string {
 	defer monitor()()
 	return fmt.Sprintf("%v", mips.keys())
 }
 
+// LinkList from netlink
 func LinkList() ([]netlink.Link, error) {
 	return netlink.LinkList()
 }
 
+// LinkNames list all network device names
 func LinkNames() (names []string) {
 	if links, err := LinkList(); err == nil {
 		for _, link := range links {
@@ -68,6 +76,7 @@ func LinkNames() (names []string) {
 	return
 }
 
+// LinkAddrList of all devices for all families
 func LinkAddrList() (Addrs []netlink.Addr) {
 	if links, err := LinkList(); err == nil {
 		for _, linkName := range links {
@@ -82,6 +91,7 @@ func LinkAddrList() (Addrs []netlink.Addr) {
 	return
 }
 
+// LinkAddrListByName addresses for one device for all address families
 func LinkAddrListByName(linkName string) (Addrs []netlink.Addr) {
 	if link, err := netlink.LinkByName(linkName); err == nil {
 		if addrs, err := netlink.AddrList(link, netlink.FAMILY_ALL); err == nil {
@@ -95,6 +105,7 @@ func LinkAddrListByName(linkName string) (Addrs []netlink.Addr) {
 	return
 }
 
+// LinkIPv4AddrListByName addresses for one device for ipv4
 func LinkIPv4AddrListByName(linkName string) (Addrs []netlink.Addr) {
 	if link, err := netlink.LinkByName(linkName); err == nil {
 		if addrs, err := netlink.AddrList(link, netlink.FAMILY_V4); err == nil {
@@ -108,6 +119,7 @@ func LinkIPv4AddrListByName(linkName string) (Addrs []netlink.Addr) {
 	return
 }
 
+// LinkIPv6AddrListByName addresses for one device for ipv6
 func LinkIPv6AddrListByName(linkName string) (Addrs []netlink.Addr) {
 	if link, err := netlink.LinkByName(linkName); err == nil {
 		if addrs, err := netlink.AddrList(link, netlink.FAMILY_V6); err == nil {
@@ -117,6 +129,16 @@ func LinkIPv6AddrListByName(linkName string) (Addrs []netlink.Addr) {
 		}
 	} else {
 		fmt.Println(err)
+	}
+	return
+}
+
+func DevCIDR(dev string) (c *CIDR) {
+	for i, addr := range LinkIPv4AddrListByName(dev) {
+		if i == 0 {
+			c = Addr2CIDR(addr)
+			break
+		}
 	}
 	return
 }

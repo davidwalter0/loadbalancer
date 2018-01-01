@@ -14,16 +14,16 @@ func ServiceKey(Service *v1.Service) string {
 // ServiceSource IP:NodePort from v1.Service
 func ServiceSource(Service *v1.Service) (Source string) {
 	var IP string
-	var NodePort int32
+	var Port int32
 	for _, port := range Service.Spec.Ports {
-		if port.NodePort > 0 {
-			NodePort = port.NodePort
+		if port.Port > 0 {
+			Port = port.Port
 			if len(Service.Spec.LoadBalancerIP) > 0 {
 				IP = Service.Spec.LoadBalancerIP
 			} else {
 				IP = "0.0.0.0"
 			}
-			Source = fmt.Sprintf("%s:%d", IP, NodePort)
+			Source = fmt.Sprintf("%s:%d", IP, Port)
 			break
 		}
 	}

@@ -3,6 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
+
+	"github.com/davidwalter0/llb/ipmgr"
 
 	"github.com/vishvananda/netlink"
 )
@@ -13,6 +16,7 @@ import (
 // 	FAMILY_V6   = nl.FAMILY_V6
 // 	FAMILY_MPLS = nl.FAMILY_MPLS
 // )
+
 func main() {
 	if links, err := netlink.LinkList(); err != nil {
 		fmt.Println(err)
@@ -37,6 +41,13 @@ func main() {
 	} else {
 		for i, addr := range addrs {
 			fmt.Printf("IPv4 %d addr %v\n", i, addr)
+			fmt.Printf("IPv4 %d addr IPNet %s|device %s\n", i, addr.IPNet, addr.Label)
+			address := addr.IPNet.String()
+			var cidr ipmgr.CIDR
+			cidr.FromString(address)
+			fmt.Println("CIDR", cidr, "Address", address)
+			fmt.Printf("IPv4 %d addr IPNet %s|device %s\n", i, addr.IPNet, addr.Label)
+			fmt.Printf("IPv4 %d addr %v %d\n", i, addr.IPNet.IP, addr.IPNet.Mask)
 		}
 	}
 }
