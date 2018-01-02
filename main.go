@@ -6,15 +6,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/davidwalter0/forwarder/kubeconfig"
-	"github.com/davidwalter0/forwarder/share"
 	"github.com/golang/glog"
 
+	"github.com/davidwalter0/llb/global"
+	"github.com/davidwalter0/llb/kubeconfig"
 	mgmt "github.com/davidwalter0/llb/manager"
 	"github.com/davidwalter0/llb/watch"
 )
 
-var envCfg = &share.ServerCfg{}
+var envCfg = global.Cfg()
 
 // retries number of attempts
 var retries = 3
@@ -36,10 +36,9 @@ func main() {
 	me := array[len(array)-1]
 	fmt.Printf("%s: Version %s version build %s commit %s\n", me, Version, Build, Commit)
 
-	// Load the configuration
-	envCfg.Read()
-
+	fmt.Println(*envCfg)
 	// creates the clientset
+
 	clientset := kubeconfig.NewClientset(envCfg)
 	if clientset == nil {
 		glog.Fatal("Kubernetes connection failed")

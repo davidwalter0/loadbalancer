@@ -35,8 +35,8 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 
-	"github.com/davidwalter0/forwarder/share"
 	mgr "github.com/davidwalter0/llb/manager"
+	"github.com/davidwalter0/llb/share"
 )
 
 var EnvCfg *share.ServerCfg

@@ -11,21 +11,42 @@ import (
 	"k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/davidwalter0/forwarder/listener"
-	"github.com/davidwalter0/forwarder/pipe"
-	"github.com/davidwalter0/forwarder/share"
-	"github.com/davidwalter0/forwarder/tracer"
 	"github.com/davidwalter0/go-mutex"
+	"github.com/davidwalter0/llb/global"
+	"github.com/davidwalter0/llb/ipmgr"
+	"github.com/davidwalter0/llb/listener"
+	"github.com/davidwalter0/llb/pipe"
+	"github.com/davidwalter0/llb/share"
+	"github.com/davidwalter0/llb/tracer"
 )
 
-// Services chan of *v1.Service
-
+// Services chan of *v1.Service to create and monitor
 var Services chan *v1.Service
+
+// RemoveServices channel of services to close
 var RemovedServices chan string
 
+// IP default link IP
+var IP string
+
+// Bits default link CIDR bits abbrev
+var Bits string
+
+// LinkDev default link device to use for external ip services
+var LinkDev string
+
+// LinkAddrs list of addresses on the default link device
+var LinkAddrs = make(map[string]int)
+
 func init() {
+	c := ipmgr.LinkDefaultCIDR(global.Cfg().LinkDevice)
+	IP = c.IP
+	Bits = c.Bits
+	LinkDev = global.Cfg().LinkDevice
+	LinkAddrs[IP] = 1
 	Services = make(chan *v1.Service, 100)
 	RemovedServices = make(chan string, 100)
+	fmt.Println("Defaults", IP, Bits, LinkDev, c)
 }
 
 // retries number of attempts
@@ -60,6 +81,8 @@ func (mgr *Mgr) Monitor() func() {
 	return mgr.Mutex.MonitorTrace()
 }
 
+var mgIPs ipmgr.LoadBalancerIPs = make(ipmgr.LoadBalancerIPs)
+
 // NewPipeDefinition from a kubernetes v1.Service
 func NewPipeDefinition(Service *v1.Service, envCfg *share.ServerCfg) *pipe.Definition {
 	defer trace.Tracer.ScopedTrace()()
@@ -79,6 +102,16 @@ func NewPipeDefinition(Service *v1.Service, envCfg *share.ServerCfg) *pipe.Defin
 func NewManagedListenerFromV1Service(Service *v1.Service,
 	envCfg *share.ServerCfg,
 	Clientset *kubernetes.Clientset) (ml *listener.ManagedListener) {
+
+	ip := ServiceSourceIP(Service)
+	var c *ipmgr.CIDR = &ipmgr.CIDR{IP: ip, Bits: Bits, Dev: LinkDev}
+	if len(ip) > 0 {
+		if count, found := LinkAddrs[ip]; !found || count == 0 {
+			mgIPs.AddAddr(c.String(), c.Dev)
+			LinkAddrs[ip]++
+		}
+	}
+
 	ml = &listener.ManagedListener{
 		Definition: *NewPipeDefinition(Service, envCfg),
 		Listener:   Listen(ServiceSource(Service)),
@@ -93,6 +126,7 @@ func NewManagedListenerFromV1Service(Service *v1.Service,
 		Active:     0,
 		Interface:  Service,
 		InCluster:  false,
+		CIDR:       c,
 	}
 	return
 }
@@ -139,9 +173,15 @@ func (mgr *Mgr) Run() {
 func (mgr *Mgr) RemovePipe(Key string) {
 	defer trace.Tracer.ScopedTrace()()
 
-	if _, ok := mgr.Listeners[Key]; ok {
+	if listener, ok := mgr.Listeners[Key]; ok {
 		mgr.Listeners[Key].Close()
 		defer mgr.Mutex.MonitorTrace("Merge")()
+		ip := listener.CIDR.IP
+		LinkAddrs[ip]--
+		if ip != IP && LinkAddrs[ip] == 0 {
+			mgIPs.RemoveAddr(listener.CIDR.String())
+			delete(mgIPs, ip)
+		}
 		delete(mgr.Listeners, Key)
 	}
 }

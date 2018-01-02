@@ -30,6 +30,14 @@ func ServiceSource(Service *v1.Service) (Source string) {
 	return
 }
 
+// ServiceSourceIP IP from v1.Service
+func ServiceSourceIP(Service *v1.Service) (IP string) {
+	if len(Service.Spec.LoadBalancerIP) > 0 {
+		IP = Service.Spec.LoadBalancerIP
+	}
+	return
+}
+
 // ServiceSink IP:NodePort from v1.Service
 func ServiceSinks(Service *v1.Service) (Sink []string) {
 	var IP string

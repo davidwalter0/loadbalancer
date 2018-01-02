@@ -8,7 +8,11 @@ export DIR=$(MAKEFILE_DIR)
 
 .PHONY: deps install clean image build push test
 
-depends:=$(shell ls -1 manager/*.go watch/*.go| grep -v test)
+dirs=chanqueue/*.go global/*.go manager/*.go share/*.go tracer/*.go kubeconfig/*.go ipmgr/*.go pipe/*.go listener/*.go watch/*.go
+depends:=$(shell ls -1 $(dirs)| grep -v test)
+
+
+
 
 build_deps:=$(wildcard *.go)
 target:=bin/$(notdir $(PWD))
