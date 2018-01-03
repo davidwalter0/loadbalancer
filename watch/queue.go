@@ -22,8 +22,6 @@ import (
 	"fmt"
 	"time"
 
-	"encoding/json"
-
 	"github.com/golang/glog"
 
 	"k8s.io/api/core/v1"
@@ -108,35 +106,23 @@ func (c *Controller) Publish(event Event) error {
 	}
 
 	if !exists {
-		fmt.Printf("Service %s does not exist anymore\n", key)
-		mgr.RemovedServices <- key
+		fmt.Printf("Event %s for service %s\n", etype, key)
+		mgr.DeleteService <- key
 	} else {
+		Service := obj.(*v1.Service)
 		// Note that you also have to check the uid if you have a local
 		// controlled resource, which is dependent on the actual instance,
 		// to detect that a Service was recreated with the same name
-		Service := obj.(*v1.Service)
-		fmt.Printf("Sync/Add/Update for Service %s\n", key)
-		// fmt.Printf("Sync/Add/Update for Service %s\n", Service.GetName())
 		// Publish to manager for load balancer types
-		if Service.Spec.Type == "LoadBalancer" {
+		switch Service.Spec.Type {
+		case "LoadBalancer":
+			fmt.Printf("Event %s for service %s Type %s\n", etype, key, Service.Spec.Type)
 			name := Service.ObjectMeta.Name
 			ns := Service.ObjectMeta.Namespace
 			fmt.Printf("Load balancer found notify mgr ns/name %s/%s\n", ns, name)
 			mgr.Services <- Service
-		}
-		if false && EnvCfg.Debug {
-			var jsonbytes []byte
-			if jsonbytes, err = json.MarshalIndent(Service, "", "  "); err == nil {
-				fmt.Printf("JSON for Service\nName: %s Key: %s Event: %s\n%s\n%v\n",
-					Service.GetName(),
-					key,
-					etype,
-					string(jsonbytes),
-					Service.Spec)
-
-			} else {
-				fmt.Println(err)
-			}
+		default:
+			fmt.Printf("Ignore event %s for service %s Type %s\n", etype, key, Service.Spec.Type)
 		}
 	}
 	return nil

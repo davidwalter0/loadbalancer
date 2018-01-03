@@ -1,4 +1,13 @@
 /*
+
+------------------------------------------------------------------------
+
+Modified from the original example code to first connect with
+incluster configuration then if unsuccessful external kubeconfig
+format file
+
+------------------------------------------------------------------------
+
 Copyright 2016 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +23,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Note: the example only works with the code within the same release/branch.
+// Note: the example only works with the code within the same
+// release/branch.
 package kubeconfig
 
 import (

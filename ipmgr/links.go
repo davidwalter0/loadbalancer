@@ -97,7 +97,7 @@ func LinkDefaultAddr(link string) *netlink.Addr {
 // bits/routes
 func LinkDefaultCIDR(link string) *CIDR {
 	for _, addr := range LinkIPv4AddrListByName(link) {
-		fmt.Println(addr)
+		fmt.Println("LinkDefaultCIDR", addr)
 		return Addr2CIDR(addr)
 	}
 	return nil

@@ -20,7 +20,7 @@ func TestAddAddr(t *testing.T) {
 				assert.Nil(c)
 			case false:
 				if assert.NotNil(c) {
-					testLBIps.AddAddr(next.IPCidrStr, next.Device)
+					testLBIps.AddAddr(next.IPCidrStr, next.LinkDevice)
 				}
 			}
 		}
@@ -44,7 +44,7 @@ func TestRemoveAddr(t *testing.T) {
 				assert.Nil(c)
 			case false:
 				if assert.NotNil(c) {
-					testLBIps.RemoveAddr(next.IPCidrStr)
+					testLBIps.RemoveAddr(next.IPCidrStr, next.LinkDevice)
 				}
 			}
 		}

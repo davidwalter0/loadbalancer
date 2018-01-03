@@ -11,9 +11,6 @@ export DIR=$(MAKEFILE_DIR)
 dirs=chanqueue/*.go global/*.go manager/*.go share/*.go tracer/*.go kubeconfig/*.go ipmgr/*.go pipe/*.go listener/*.go watch/*.go
 depends:=$(shell ls -1 $(dirs)| grep -v test)
 
-
-
-
 build_deps:=$(wildcard *.go)
 target:=bin/$(notdir $(PWD))
 
@@ -35,10 +32,10 @@ $(target): $(build_deps) $(depends) Makefile
 	@echo $(depends)
 	@if go version|grep -q 1.4 ; then														\
             . .version;																	\
-	    args="-s -w -X main.Version $${version} -X main.Build $$(date -u +%Y.%m.%d.%H.%M.%S.%:::z) -X main.Commit $$(git log --format=%h-%aI -n1)";	\
+	    args=" -X main.Version $${version} -X main.Build $$(date -u +%Y.%m.%d.%H.%M.%S.%:::z) -X main.Commit $$(git log --format=%h-%aI -n1)";	\
 	else																		\
             . .version;																	\
-	    args="-s -w -X main.Version=$${version} -X main.Build=$$(date -u +%Y.%m.%d.%H.%M.%S.%:::z) -X main.Commit=$$(git log --format=%h-%aI -n1)";	\
+	    args=" -X main.Version=$${version} -X main.Build=$$(date -u +%Y.%m.%d.%H.%M.%S.%:::z) -X main.Commit=$$(git log --format=%h-%aI -n1)";	\
 	fi;																		\
 	CGO_ENABLED=0 go build --tags netgo -ldflags "$${args}" -o $@ $(build_deps) ;
 

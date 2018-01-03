@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"k8s.io/api/core/v1"
+
+	"github.com/davidwalter0/llb/ipmgr"
 )
 
 // ServiceKey from v1.Service info for map lookup in listeners
@@ -21,7 +23,8 @@ func ServiceSource(Service *v1.Service) (Source string) {
 			if len(Service.Spec.LoadBalancerIP) > 0 {
 				IP = Service.Spec.LoadBalancerIP
 			} else {
-				IP = "0.0.0.0"
+				// IP = "0.0.0.0"
+				IP = ipmgr.DefaultCIDR.IP
 			}
 			Source = fmt.Sprintf("%s:%d", IP, Port)
 			break

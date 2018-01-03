@@ -17,15 +17,12 @@ func main() {
 	}
 	fmt.Println(m.String())
 	fmt.Println(m)
-	// link, _ := netlink.LinkByName("wlan0")
-	// addr, _ := netlink.ParseAddr("192.168.0.129/24")
-	// netlink.AddrAdd(link, addr)
 
 	linkNames := ipmgr.LinkNames()
 	fmt.Println(linkNames)
 
 	for _, name := range linkNames {
-		var devCIDR *ipmgr.CIDR = ipmgr.DevCIDR(name)
+		var devCIDR *ipmgr.CIDR = ipmgr.DefaultCIDR(name)
 		fmt.Printf("%s\n", name)
 		for i, addr := range ipmgr.LinkIPv4AddrListByName(name) {
 			fmt.Printf("  %3d match %v %v %v\n", i, devCIDR, addr, devCIDR.MatchAddr(&addr))

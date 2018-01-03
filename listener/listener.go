@@ -1,13 +1,13 @@
 package listener
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/davidwalter0/go-mutex"
@@ -35,36 +35,9 @@ type ManagedListener struct {
 	StopWatch  chan bool
 	Clientset  *kubernetes.Clientset
 	Active     uint64
-	Interface  interface{}
+	V1Service  *v1.Service
 	InCluster  bool
 	*ipmgr.CIDR
-}
-
-// NewManagedListener create and populate a ManagedListener
-func NewManagedListener(
-	pipedef *pipe.Definition,
-	envCfg *share.ServerCfg,
-	Clientset *kubernetes.Clientset) (ml *ManagedListener) {
-	if pipedef != nil {
-		defer trace.Tracer.ScopedTrace()()
-		ml = &ManagedListener{
-			Definition: *pipedef,
-			Listener:   Listen(pipedef.Source),
-			Pipes:      make(map[*pipe.Pipe]bool),
-			Mutex:      &mutex.Mutex{},
-			Kubernetes: envCfg.Kubernetes,
-			MapAdd:     make(chan *pipe.Pipe, 3),
-			MapRm:      make(chan *pipe.Pipe, 3),
-			StopWatch:  make(chan bool, 3),
-			Debug:      pipedef.Debug || envCfg.Debug,
-			Clientset:  Clientset,
-			Active:     0,
-			InCluster:  kubeconfig.InCluster,
-		}
-	}
-
-	trace.Tracer.Enable(envCfg.Debug)
-	return
 }
 
 // Monitor for this ManagedListener
@@ -186,7 +159,6 @@ func (ml *ManagedListener) Listening() {
 	for {
 		var err error
 		var SourceConn, SinkConn net.Conn
-		// defer trace.Tracer.ScopedTrace(fmt.Sprintf("listener:%v", ml))()
 		if SourceConn, err = ml.Accept(); err != nil {
 			log.Printf("Connection failed: %v\n", err)
 			break
@@ -221,22 +193,4 @@ func (ml *ManagedListener) Close() {
 			}
 		}
 	}
-}
-
-// Listen open listener on address
-func Listen(address string) (listener net.Listener) {
-	defer trace.Tracer.ScopedTrace()()
-	var err error
-	if true {
-		defer trace.Tracer.ScopedTrace(fmt.Sprintf("listener:%v err: %v", listener, err))()
-	}
-	for i := 0; i < retries; i++ {
-		listener, err = net.Listen("tcp", address)
-		if err != nil {
-			log.Printf("net.Listen(\"tcp\", %s ) failed: %v\n", address, err)
-		} else {
-			return listener
-		}
-	}
-	return
 }

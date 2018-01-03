@@ -10,9 +10,9 @@ import (
 
 // CIDR ip/bits CIDR struct
 type CIDR struct {
-	IP   string
-	Bits string
-	Dev  string
+	IP         string
+	Bits       string
+	LinkDevice string
 }
 
 // SubNet returns the ip, subnetwork and error (if any) of the CIDR
@@ -50,7 +50,7 @@ func StringToCIDR(cidr string) (c *CIDR) {
 func Addr2CIDR(addr netlink.Addr) (c *CIDR) {
 	cidr := addr.IPNet.String()
 	split := strings.Split(cidr, "/")
-	c = &CIDR{IP: split[0], Bits: split[1], Dev: addr.Label}
+	c = &CIDR{IP: split[0], Bits: split[1], LinkDevice: addr.Label}
 	return
 }
 
@@ -94,8 +94,8 @@ func (c *CIDR) String() string {
 
 // CIDRDevString from CIDR with device
 func (c *CIDR) CIDRDevString() string {
-	if len(c.Dev) > 0 {
-		return fmt.Sprintf("%s/%s %s", c.IP, c.Bits, c.Dev)
+	if len(c.LinkDevice) > 0 {
+		return fmt.Sprintf("%s/%s %s", c.IP, c.Bits, c.LinkDevice)
 	} else {
 		return fmt.Sprintf("%s/%s", c.IP, c.Bits)
 	}

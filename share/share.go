@@ -13,13 +13,13 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	// "github.com/davidwalter0/forwarder/chanqueue"
+	// "github.com/davidwalter0/llb/chanqueue"
 	"github.com/davidwalter0/go-cfg"
 )
 
 const (
 	// TickDelay delay between log entries
-	TickDelay = time.Duration(10 * time.Second)
+	TickDelay = time.Duration(600 * time.Second)
 	// Open : State
 	Open = iota
 	// Closed : State
