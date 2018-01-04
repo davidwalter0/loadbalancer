@@ -13,7 +13,7 @@ var Bits string
 // LinkDevice default link device to use for external ip addresses
 var LinkDevice string
 
-// LinkDevice default link device to use for external ip addresses
+// DefaultCIDR default link device to use for external ip addresses
 var DefaultCIDR *CIDR
 
 func init() {

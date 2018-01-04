@@ -43,7 +43,7 @@ func NewClientCfg() *ClientCfg {
 
 type ForwarderCfg struct {
 	Debug      bool   `json:"debug"       doc:"increase verbosity"                               default:"false"`
-	Kubeconfig string `json:"kubeconfig"  doc:"kubernetes auth secrets / configuration file"     default:""`
+	Kubeconfig string `json:"kubeconfig"  doc:"kubernetes auth secrets / configuration file"     default:"cluster/auth/kubeconfig"`
 	Kubernetes bool   `json:"kubernetes"  doc:"use kubernetes dynamic endpoints from service/ns" default:"true"`
 	LinkDevice string `json:"linkdevice"  doc:"device for load balancers external addresses"`
 }

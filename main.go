@@ -11,7 +11,6 @@ import (
 	"github.com/davidwalter0/llb/global"
 	"github.com/davidwalter0/llb/kubeconfig"
 	mgmt "github.com/davidwalter0/llb/manager"
-	"github.com/davidwalter0/llb/watch"
 )
 
 var envCfg = global.Cfg()
@@ -39,13 +38,11 @@ func main() {
 	fmt.Println(*envCfg)
 	// creates the clientset
 
-	clientset := kubeconfig.NewClientset(envCfg)
+	clientset := kubeconfig.NewClientset(envCfg.Kubeconfig)
 	if clientset == nil {
 		glog.Fatal("Kubernetes connection failed")
 	}
 	var mgr *mgmt.Mgr = mgmt.NewMgr(envCfg, clientset)
-	watch.SetConfig(envCfg)
-	go watch.RunWatcher(clientset)
 	go mgr.Run()
 	select {}
 }

@@ -28,7 +28,6 @@ limitations under the License.
 package kubeconfig
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -44,9 +43,6 @@ import (
 
 	// _ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 
-	"github.com/davidwalter0/llb/share"
-	"github.com/davidwalter0/llb/tracer"
-
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -59,41 +55,30 @@ func CheckInCluster() bool {
 	return len(os.Getenv("KUBERNETES_PORT")) > 0
 }
 
-// NewClientset returns a new handle to a kubernetes client
-func NewClientset(cfg *share.ServerCfg) *kubernetes.Clientset {
-	if cfg.Kubernetes {
-		// kubeRestConfig kubernetes config object
-		var kubeRestConfig *restclient.Config
-		// clientset is a handle to execute kubernetes commands
-		var clientset *kubernetes.Clientset
-		var err error
-		var jsonText []byte
+// NewClientset returns a new handle to a kubernetes client takes
+// kubeconfig path arg
+func NewClientset(kubeconfig string) *kubernetes.Clientset {
 
-		if cfg.Debug {
-			jsonText, _ = json.MarshalIndent(cfg, "", "  ")
-			fmt.Printf("\n%v\n", string(jsonText))
-		}
-		trace.Enabled = cfg.Debug
+	// kubeRestConfig kubernetes config object
+	var kubeRestConfig *restclient.Config
+	// clientset is a handle to execute kubernetes commands
+	var clientset *kubernetes.Clientset
+	var err error
 
-		// creates the in-cluster configuration
-		kubeRestConfig, err = restclient.InClusterConfig()
-		if err != nil {
-			// try with a kubeconfig file
-			kubeRestConfig, err = clientcmd.BuildConfigFromFlags("", cfg.Kubeconfig)
-		} else {
-			InCluster = true
-		}
-
-		if err == nil {
-			// creates the clientset
-			clientset, err = kubernetes.NewForConfig(kubeRestConfig)
-			if err == nil {
-				cfg.Kubernetes = true
-			}
-		}
-		return clientset
+	// creates the in-cluster configuration
+	kubeRestConfig, err = restclient.InClusterConfig()
+	if err != nil {
+		// try with a kubeconfig file
+		kubeRestConfig, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+	} else {
+		InCluster = true
 	}
-	return nil
+
+	if err == nil {
+		// creates the clientset
+		clientset, err = kubernetes.NewForConfig(kubeRestConfig)
+	}
+	return clientset
 }
 
 // ErrorHandler print error message based on error type

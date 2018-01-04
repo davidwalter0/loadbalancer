@@ -15,13 +15,8 @@ import (
 	"github.com/davidwalter0/llb/listener"
 	"github.com/davidwalter0/llb/share"
 	"github.com/davidwalter0/llb/tracer"
+	"github.com/davidwalter0/llb/watch"
 )
-
-// Services chan of *v1.Service to create and monitor
-var Services = make(chan *v1.Service, 100)
-
-// DeleteService channel of services to close
-var DeleteService = make(chan string, 100)
 
 var managedLBIPs ipmgr.LoadBalancerIPs = make(ipmgr.LoadBalancerIPs)
 
@@ -59,18 +54,31 @@ func (mgr *Mgr) Monitor() func() {
 
 // Run primary processing loop
 func (mgr *Mgr) Run() {
+	serviceWatcher := watch.NewQueueMgr(watch.ServiceAPIName, mgr.Clientset)
+	go serviceWatcher.Run()
+
 	for {
 		select {
-		case Service, ok := <-Services:
+		case item, ok := <-serviceWatcher.QueueItems:
 			if !ok {
 				log.Fatal("error in Services Channel")
+			} else {
+				switch item.EventType {
+				case watch.ADD:
+					fallthrough
+				case watch.UPDATE:
+					Service := item.Interface.(*v1.Service)
+					fmt.Printf("Event %s for service %s with type %s\n", item.Key, Service.Spec.Type, item.EventType)
+					switch Service.Spec.Type {
+					case "LoadBalancer":
+						mgr.UpdatePipe(Service)
+					default:
+						mgr.RemovePipe(item.Key)
+					}
+				case watch.DELETE:
+					mgr.RemovePipe(item.Key)
+				}
 			}
-			mgr.UpdatePipe(Service)
-		case Service, ok := <-DeleteService:
-			if !ok {
-				log.Fatal("error in DeleteService Listener Channel")
-			}
-			mgr.RemovePipe(Service)
 		}
 	}
 }

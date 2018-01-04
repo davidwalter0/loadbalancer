@@ -1,6 +1,5 @@
-// pkg/watch/info.md         /go/src/k8s.io/kubernetes/staging/src/k8s.io/client-go/pkg/watch/info.md
-
 /*
+
 Copyright 2017 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,68 +13,73 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+*/
+
+/*
+
+- based on k8s.io/client-go/examples/workqueue
+- refactored to enable multiple watchers via new QueueMgr
+
 */
 
 package watch
 
 import (
 	"fmt"
+	"log"
+	"os"
 	"time"
 
-	"github.com/golang/glog"
-
 	"k8s.io/api/core/v1"
-	// meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	pkgruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
-
-	mgr "github.com/davidwalter0/llb/manager"
-	"github.com/davidwalter0/llb/share"
 )
 
-var EnvCfg *share.ServerCfg
+// Interface abstraction for returned type
+type Interface interface{}
 
-func SetConfig(e *share.ServerCfg) {
-	EnvCfg = e
-}
-
-type EType string
-
-const (
-	ADD    = "ADD"
-	DELETE = "DELETE"
-	UPDATE = "UPDATE"
-)
-
-type Event struct {
+// QueueItem publishable object from watch
+type QueueItem struct {
 	Key string
-	EType
-	*v1.Service
+	K8sAPIName
+	EventType
+	Interface
 }
 
-var Events chan Event = make(chan Event, 100)
+// QueueItems channel for downstream consumption
+type QueueItems chan QueueItem
 
-type Controller struct {
-	indexer  cache.Indexer
-	queue    workqueue.RateLimitingInterface
-	informer cache.Controller
+// QueueController allows the creation of multiple independent queue
+// controllers
+type QueueController struct {
+	K8sAPIName
+	cache.Indexer
+	workqueue.RateLimitingInterface
+	cache.Controller
+	QueueItems
 }
 
-func NewController(queue workqueue.RateLimitingInterface, indexer cache.Indexer, informer cache.Controller) *Controller {
-	return &Controller{
-		informer: informer,
-		indexer:  indexer,
-		queue:    queue,
+// NewQueueController creates a watch callback interface
+func NewQueueController(typeName K8sAPIName, RateLimitingInterface workqueue.RateLimitingInterface, Indexer cache.Indexer, Controller cache.Controller) *QueueController {
+	return &QueueController{
+		K8sAPIName:            typeName,
+		Indexer:               Indexer,
+		RateLimitingInterface: RateLimitingInterface,
+		Controller:            Controller,
+		QueueItems:            make(chan QueueItem, 100),
 	}
 }
 
-func (c *Controller) processNextItem() bool {
+// Next pushes the event item to it's queue
+func (c *QueueController) Next() bool {
 	// Wait until there is a new item in the working queue
-	event, quit := c.queue.Get()
+	event, quit := c.RateLimitingInterface.Get()
 	if quit {
 		return false
 	}
@@ -84,92 +88,76 @@ func (c *Controller) processNextItem() bool {
 	// unblocks the event for other workers This allows safe parallel
 	// processing because two services with the same event are never
 	// processed in parallel.
-	defer c.queue.Done(event)
+	defer c.RateLimitingInterface.Done(event)
 
 	// Invoke the method containing the business logic
-	err := c.Publish(event.(Event))
+	err := c.Publish(event.(QueueItem))
 	// Handle the error if something went wrong during the execution of
 	// the business logic
-	c.handleErr(err, event)
+	c.handleErr(err, event.(QueueItem))
 	return true
 }
 
 // Publish is the business logic of the controller publishing to the
 // mgr's service channel.
-func (c *Controller) Publish(event Event) error {
+func (c *QueueController) Publish(event QueueItem) error {
 	key := event.Key
-	etype := event.EType
-	obj, exists, err := c.indexer.GetByKey(key)
+	// obj, exists, err := c.Indexer.GetByKey(key)
+	obj, _, err := c.Indexer.GetByKey(key)
 	if err != nil {
-		glog.Errorf("Fetching object with key %s from store failed with %v", key, err)
+		fmt.Fprintf(os.Stderr, "%s Fetching object with key %s from store failed with %v", log.Prefix(), key, err)
 		return err
 	}
 
-	if !exists {
-		fmt.Printf("Event %s for service %s\n", etype, key)
-		mgr.DeleteService <- key
-	} else {
-		Service := obj.(*v1.Service)
-		// Note that you also have to check the uid if you have a local
-		// controlled resource, which is dependent on the actual instance,
-		// to detect that a Service was recreated with the same name
-		// Publish to manager for load balancer types
-		switch Service.Spec.Type {
-		case "LoadBalancer":
-			fmt.Printf("Event %s for service %s Type %s\n", etype, key, Service.Spec.Type)
-			name := Service.ObjectMeta.Name
-			ns := Service.ObjectMeta.Namespace
-			fmt.Printf("Load balancer found notify mgr ns/name %s/%s\n", ns, name)
-			mgr.Services <- Service
-		default:
-			fmt.Printf("Ignore event %s for service %s Type %s\n", etype, key, Service.Spec.Type)
-		}
-	}
+	fmt.Printf("QueueItem %s for %s %s\n", event.EventType, event.K8sAPIName, key)
+	event.Interface = obj
+	c.QueueItems <- event
+
 	return nil
 }
 
 // handleErr checks if an error happened and makes sure we will retry later.
-func (c *Controller) handleErr(err error, event interface{}) {
+func (c *QueueController) handleErr(err error, event QueueItem) { //interface{}) {
 	if err == nil {
 		// Forget about the #AddRateLimited history of the event on every
 		// successful synchronization.  This ensures that future
 		// processing of updates for this event is not delayed because of
 		// an outdated error history.
-		c.queue.Forget(event)
+		c.RateLimitingInterface.Forget(event)
 		return
 	}
 
 	// This controller retries 5 times if something goes wrong. After
 	// that, it stops trying.
-	if c.queue.NumRequeues(event) < 5 {
-		glog.Infof("Error syncing service %v: %v", event, err)
+	if c.RateLimitingInterface.NumRequeues(event) < 5 {
+		log.Printf("Error syncing %s %v: %v", event.K8sAPIName, event, err)
 
 		// Re-enqueue the event rate limited. Based on the rate limiter on
 		// the queue and the re-enqueue history, the event will be
 		// processed later again.
-		c.queue.AddRateLimited(event)
+		c.RateLimitingInterface.AddRateLimited(event)
 		return
 	}
 
-	c.queue.Forget(event)
+	c.RateLimitingInterface.Forget(event)
 	// Report to an external entity that, even after several retries, we
 	// could not successfully process this event
 	runtime.HandleError(err)
-	glog.Infof("Dropping service %q out of the queue: %v", event, err)
+	log.Printf("Dropping %s %q out of the queue: %v", event.K8sAPIName, event, err)
 }
 
-func (c *Controller) Run(threadiness int, stopCh chan struct{}) {
+func (c *QueueController) Run(threadiness int, stopCh chan struct{}) {
 	defer runtime.HandleCrash()
 
 	// Let the workers stop when we are done
-	defer c.queue.ShutDown()
-	glog.Info("Starting Service controller")
+	defer c.RateLimitingInterface.ShutDown()
+	log.Printf("Starting %s controller", c.K8sAPIName)
 
-	go c.informer.Run(stopCh)
+	go c.Controller.Run(stopCh)
 
 	// Wait for all involved caches to be synced, before processing
 	// items from the queue is started
-	if !cache.WaitForCacheSync(stopCh, c.informer.HasSynced) {
+	if !cache.WaitForCacheSync(stopCh, c.Controller.HasSynced) {
 		runtime.HandleError(fmt.Errorf("Timed out waiting for caches to sync"))
 		return
 	}
@@ -179,38 +167,53 @@ func (c *Controller) Run(threadiness int, stopCh chan struct{}) {
 	}
 
 	<-stopCh
-	glog.Info("Stopping Service controller")
+	log.Printf("Stopping %s controller", c.K8sAPIName)
 }
 
-func (c *Controller) runWorker() {
-	for c.processNextItem() {
+func (c *QueueController) runWorker() {
+	for c.Next() {
 	}
 }
 
-func RunWatcher(clientset *kubernetes.Clientset) {
-	serviceListWatcher := cache.NewListWatchFromClient(clientset.CoreV1().RESTClient(), "services", v1.NamespaceAll, fields.Everything())
+// QueueMgr abstract the parts of a watcher
+type QueueMgr struct {
+	*kubernetes.Clientset
+	*cache.ListWatch
+	*QueueController
+}
 
+// NewQueueMgr takes a type string (services, pods, nodes, ...)  and a
+// *kubernetes.Clientset, realTypePointer is the type of the reference
+// object &v1.Service{}, &v1.Node{}...
+func NewQueueMgr(watchTypeName K8sAPIName, clientset *kubernetes.Clientset) *QueueMgr {
+	var queueMgr = &QueueMgr{}
+	queueMgr.ListWatch = cache.NewListWatchFromClient(clientset.CoreV1().RESTClient(), string(watchTypeName), v1.NamespaceAll, fields.Everything())
 	// create the workqueue
 	ratelimiter := workqueue.DefaultControllerRateLimiter()
 	queue := workqueue.NewRateLimitingQueue(ratelimiter)
+	var realTypePointer pkgruntime.Object
+	switch watchTypeName {
+	case "services":
+		realTypePointer = &v1.Service{}
+	case "nodes":
+		realTypePointer = &v1.Node{}
+	case "pods":
+		realTypePointer = &v1.Pod{}
+	case "endpoints":
+		realTypePointer = &v1.Endpoints{}
+	}
 
-	// Bind the workqueue to a cache with the help of an informer. This
-	// way we make sure that whenever the cache is updated, the service
-	// event is added to the workqueue.  Note that when we finally
-	// process the item from the workqueue, we might see a newer version
-	// of the Service than the version which was responsible for
-	// triggering the update.
-	indexer, informer := cache.NewIndexerInformer(serviceListWatcher, &v1.Service{}, 0, cache.ResourceEventHandlerFuncs{
+	indexer, controller := cache.NewIndexerInformer(queueMgr.ListWatch, realTypePointer, 0, cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			key, err := cache.MetaNamespaceKeyFunc(obj)
 			if err == nil {
-				queue.Add(Event{Key: key, EType: ADD})
+				queue.Add(QueueItem{Key: key, K8sAPIName: watchTypeName, EventType: ADD})
 			}
 		},
 		UpdateFunc: func(old interface{}, new interface{}) {
 			key, err := cache.MetaNamespaceKeyFunc(new)
 			if err == nil {
-				queue.Add(Event{Key: key, EType: UPDATE})
+				queue.Add(QueueItem{Key: key, K8sAPIName: watchTypeName, EventType: UPDATE})
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
@@ -218,17 +221,24 @@ func RunWatcher(clientset *kubernetes.Clientset) {
 			// event function.
 			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 			if err == nil {
-				queue.Add(Event{Key: key, EType: DELETE})
+				queue.Add(QueueItem{Key: key, K8sAPIName: watchTypeName, EventType: DELETE})
 			}
 		},
 	}, cache.Indexers{})
 
-	controller := NewController(queue, indexer, informer)
+	queueMgr.QueueController = NewQueueController(watchTypeName, queue, indexer, controller)
+
+	return queueMgr
+}
+
+// RunWatcher creates a QueueController and executes watchers
+
+func (queueMgr *QueueMgr) Run() {
 
 	// Now let's start the controller
 	stop := make(chan struct{})
 	defer close(stop)
-	go controller.Run(1, stop)
+	go queueMgr.QueueController.Run(1, stop)
 
 	// Wait forever
 	select {}
