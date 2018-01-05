@@ -48,7 +48,7 @@ func main() {
 	}
 
 	podWatcher := watch.NewQueueMgr(watch.PodAPIName, clientset)
-	go podWatcher.Run()
+	go podWatcher.Run(2, 2)
 
 	time.Sleep(10 * time.Second)
 	for i := 0; i < 100; i++ {

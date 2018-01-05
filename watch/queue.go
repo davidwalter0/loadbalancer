@@ -44,6 +44,9 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
+// Debug for more verbose output
+var Debug bool
+
 // Interface abstraction for returned type
 type Interface interface{}
 
@@ -112,7 +115,9 @@ func (c *QueueController) Publish(event QueueItem) error {
 		return err
 	}
 
-	fmt.Printf("QueueItem %s for %s %s\n", event.EventType, event.K8sAPIName, key)
+	if Debug {
+		log.Printf("QueueItem %s for %s %s\n", event.EventType, event.K8sAPIName, key)
+	}
 	event.Interface = obj
 	c.QueueItems <- event
 
@@ -150,7 +155,7 @@ func (c *QueueController) handleErr(err error, event QueueItem) { //interface{})
 }
 
 // Run a QueueController to manage a throttled queue of data
-func (c *QueueController) Run(threadiness int, stopCh chan struct{}) {
+func (c *QueueController) Run(threadiness int, delay time.Duration, stopCh chan struct{}) {
 	defer runtime.HandleCrash()
 
 	// Let the workers stop when we are done
@@ -167,7 +172,7 @@ func (c *QueueController) Run(threadiness int, stopCh chan struct{}) {
 	}
 
 	for i := 0; i < threadiness; i++ {
-		go wait.Until(c.runWorker, time.Second, stopCh)
+		go wait.Until(c.runWorker, delay*time.Second, stopCh)
 	}
 
 	<-stopCh
@@ -248,14 +253,14 @@ func V1TypePointer(watchTypeName K8sAPIName) (v1TypePointer pkgruntime.Object) {
 	case "endpoints":
 		v1TypePointer = &v1.Endpoints{}
 	default:
-		panic("V1TypePointer")
+		panic("Unknown V1TypePointer")
 	}
 	return
 }
 
-// NewQueueMgrListOpt takes a type string (services, pods, nodes, ...)  and a
-// *kubernetes.Clientset, v1TypePointer is the type of the reference
-// object &v1.Service{}, &v1.Node{}...
+// NewQueueMgrListOpt takes a type string (services, pods, nodes, ...)
+// and a *kubernetes.Clientset, v1TypePointer is the type of the
+// reference object &v1.Service{}, &v1.Node{}...
 func NewQueueMgrListOpt(watchTypeName K8sAPIName, clientset *kubernetes.Clientset, options *metav1.ListOptions) *QueueMgr {
 	var queueMgr = &QueueMgr{}
 	queueMgr.ListWatch = cache.NewListWatchFromClient(clientset.CoreV1().RESTClient(), string(watchTypeName), v1.NamespaceAll, fields.Everything())
@@ -290,8 +295,8 @@ func NewQueueMgrListOpt(watchTypeName K8sAPIName, clientset *kubernetes.Clientse
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
-			// IndexerInformer uses a delta queue, therefore for deletes we have to use this
-			// event function.
+			// IndexerInformer uses a delta queue, therefore for deletes we
+			// have to use this event function.
 			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 			if err == nil {
 				queue.Add(QueueItem{Key: key, K8sAPIName: watchTypeName, EventType: DELETE})
@@ -305,12 +310,12 @@ func NewQueueMgrListOpt(watchTypeName K8sAPIName, clientset *kubernetes.Clientse
 }
 
 // Run creates a QueueController and executes watchers
-func (queueMgr *QueueMgr) Run() {
+func (queueMgr *QueueMgr) Run(threadiness, sleepSeconds int) {
 
 	// Now let's start the controller
 	stop := make(chan struct{})
 	defer close(stop)
-	go queueMgr.QueueController.Run(1, stop)
+	go queueMgr.QueueController.Run(threadiness, time.Duration(sleepSeconds), stop)
 
 	// Wait forever
 	select {}

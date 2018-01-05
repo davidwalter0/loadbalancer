@@ -3,6 +3,8 @@ package ipmgr
 import (
 	"fmt"
 	"log"
+	"net"
+	"strings"
 
 	"github.com/davidwalter0/go-mutex"
 	"github.com/davidwalter0/llb/global"
@@ -26,6 +28,11 @@ type LoadBalancerIPs map[string]*LinkAddr
 
 // AddAddr adds an address to a network LinkDevice
 func (mips *LoadBalancerIPs) AddAddr(IPNet, LinkDevice string) {
+	if net.ParseIP(strings.Split(IPNet, "/")[0]) == nil {
+		log.Printf("AddAddr skipping invalid IPAddr:%v on LinkDevice:%v\n", IPNet, LinkDevice)
+		return
+	}
+
 	log.Printf("AddAddr %v %v\n", IPNet, LinkDevice)
 	defer monitor()()
 	defer trace.Tracer.ScopedTrace()()

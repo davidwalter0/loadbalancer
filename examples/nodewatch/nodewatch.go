@@ -53,7 +53,7 @@ func main() {
 	}
 
 	nodeWatcher := watch.NewQueueMgr(watch.NodeAPIName, clientset)
-	go nodeWatcher.Run()
+	go nodeWatcher.Run(2, 2)
 
 	time.Sleep(10 * time.Second)
 	for i := 0; i < 100; i++ {
@@ -79,7 +79,7 @@ func main() {
 
 	listOpts := &metav1.ListOptions{LabelSelector: "node-role.kubernetes.io/worker"}
 	nodeWatcher = watch.NewQueueMgrListOpt(watch.NodeAPIName, clientset, listOpts)
-	go nodeWatcher.Run()
+	go nodeWatcher.Run(2, 2)
 
 	time.Sleep(10 * time.Second)
 	for i := 0; i < 100; i++ {

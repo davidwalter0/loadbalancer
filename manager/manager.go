@@ -29,13 +29,13 @@ var logStatusTimeout = time.Duration(600)
 
 // Mgr management info for listeners
 type Mgr struct {
-	Listeners map[string]*listener.ManagedListener
-	Mutex     *mutex.Mutex
-	EnvCfg    *share.ServerCfg
-	*kubernetes.Clientset
-	InCluster      bool
+	Listeners      map[string]*listener.ManagedListener
+	Mutex          *mutex.Mutex
+	EnvCfg         *share.ServerCfg
 	NodeWatcher    *watch.QueueMgr
 	ServiceWatcher *watch.QueueMgr
+	InCluster      bool
+	*kubernetes.Clientset
 }
 
 // NewMgr create a new Mgr
@@ -125,13 +125,15 @@ func Listen(address string) (listener net.Listener) {
 
 // NodeWatch manage node workers list dynamically
 func (mgr *Mgr) NodeWatch() {
-	go mgr.NodeWatcher.Run()
+	go mgr.NodeWatcher.Run(2, 2)
 	for {
 		select {
 		case item, ok := <-mgr.NodeWatcher.QueueItems:
 			if ok {
 				Node := item.Interface.(*v1.Node)
-				fmt.Printf("Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
+				if mgr.EnvCfg.Debug {
+					fmt.Printf("Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
+				}
 				switch item.EventType {
 				case watch.ADD:
 					fallthrough
@@ -149,7 +151,7 @@ func (mgr *Mgr) NodeWatch() {
 
 // ServiceWatch watch.QueueMgr for LoadBalancers
 func (mgr *Mgr) ServiceWatch() {
-	go mgr.ServiceWatcher.Run()
+	go mgr.ServiceWatcher.Run(2, 2)
 	for {
 		select {
 		case item, ok := <-mgr.ServiceWatcher.QueueItems:
@@ -159,7 +161,9 @@ func (mgr *Mgr) ServiceWatch() {
 					fallthrough
 				case watch.UPDATE:
 					Service := item.Interface.(*v1.Service)
-					fmt.Printf("Event %s for service %s with type %s\n", item.Key, Service.Spec.Type, item.EventType)
+					if mgr.EnvCfg.Debug {
+						fmt.Printf("Event %s for service %s with type %s\n", item.Key, Service.Spec.Type, item.EventType)
+					}
 					switch Service.Spec.Type {
 					case "LoadBalancer":
 						mgr.UpdatePipe(Service)
