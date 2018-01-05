@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/davidwalter0/go-cfg"
 	"github.com/davidwalter0/llb/kubeconfig"
@@ -42,6 +43,10 @@ func Cfg() *ServerCfg {
 }
 
 func main() {
+	// var selector = map[string]string{
+	// 	"LabelSelector": "node-role.kubernetes.io/worker",
+	// }
+
 	clientset := kubeconfig.NewClientset(envCfg.Kubeconfig)
 	if clientset == nil {
 		log.Fatal("Kubernetes connection failed")
@@ -55,7 +60,7 @@ func main() {
 		select {
 		case item := <-nodeWatcher.QueueItems:
 			node := item.Interface.(*v1.Node)
-			fmt.Println(node.Name)
+			fmt.Println(node.Name, "ExternalID", node.Spec.ExternalID)
 			for key, value := range node.ObjectMeta.Labels {
 				fmt.Printf("  %-32s %s\n", key, value)
 			}
@@ -66,6 +71,31 @@ func main() {
 					fmt.Println(err)
 				}
 			}
+		default:
+			// non blocking channel, choose default and break
+			break
+		}
+	}
+
+	listOpts := &metav1.ListOptions{LabelSelector: "node-role.kubernetes.io/worker"}
+	nodeWatcher = watch.NewQueueMgrListOpt(watch.NodeAPIName, clientset, listOpts)
+	go nodeWatcher.Run()
+
+	time.Sleep(10 * time.Second)
+	for i := 0; i < 100; i++ {
+		select {
+		case item := <-nodeWatcher.QueueItems:
+			node := item.Interface.(*v1.Node)
+			fmt.Println(node.Name, "ExternalID", node.Spec.ExternalID)
+			for key, value := range node.ObjectMeta.Labels {
+				fmt.Printf("  %-32s %s\n", key, value)
+			}
+			if jsonText, err := json.MarshalIndent(node, "", "  "); err == nil {
+				fmt.Println(string(jsonText))
+			} else {
+				fmt.Println(err)
+			}
+
 		default:
 			// non blocking channel, choose default and break
 			break

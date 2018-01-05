@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	pkgruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/runtime"
@@ -39,6 +40,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
+
+	"k8s.io/apimachinery/pkg/watch"
 )
 
 // Interface abstraction for returned type
@@ -146,6 +149,7 @@ func (c *QueueController) handleErr(err error, event QueueItem) { //interface{})
 	log.Printf("Dropping %s %q out of the queue: %v", event.K8sAPIName, event, err)
 }
 
+// Run a QueueController to manage a throttled queue of data
 func (c *QueueController) Run(threadiness int, stopCh chan struct{}) {
 	defer runtime.HandleCrash()
 
@@ -183,7 +187,7 @@ type QueueMgr struct {
 }
 
 // NewQueueMgr takes a type string (services, pods, nodes, ...)  and a
-// *kubernetes.Clientset, realTypePointer is the type of the reference
+// *kubernetes.Clientset, v1TypePointer is the type of the reference
 // object &v1.Service{}, &v1.Node{}...
 func NewQueueMgr(watchTypeName K8sAPIName, clientset *kubernetes.Clientset) *QueueMgr {
 	var queueMgr = &QueueMgr{}
@@ -191,19 +195,19 @@ func NewQueueMgr(watchTypeName K8sAPIName, clientset *kubernetes.Clientset) *Que
 	// create the workqueue
 	ratelimiter := workqueue.DefaultControllerRateLimiter()
 	queue := workqueue.NewRateLimitingQueue(ratelimiter)
-	var realTypePointer pkgruntime.Object
+	var v1TypePointer pkgruntime.Object
 	switch watchTypeName {
 	case "services":
-		realTypePointer = &v1.Service{}
+		v1TypePointer = &v1.Service{}
 	case "nodes":
-		realTypePointer = &v1.Node{}
+		v1TypePointer = &v1.Node{}
 	case "pods":
-		realTypePointer = &v1.Pod{}
+		v1TypePointer = &v1.Pod{}
 	case "endpoints":
-		realTypePointer = &v1.Endpoints{}
+		v1TypePointer = &v1.Endpoints{}
 	}
 
-	indexer, controller := cache.NewIndexerInformer(queueMgr.ListWatch, realTypePointer, 0, cache.ResourceEventHandlerFuncs{
+	indexer, controller := cache.NewIndexerInformer(queueMgr.ListWatch, v1TypePointer, 0, cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			key, err := cache.MetaNamespaceKeyFunc(obj)
 			if err == nil {
@@ -231,8 +235,76 @@ func NewQueueMgr(watchTypeName K8sAPIName, clientset *kubernetes.Clientset) *Que
 	return queueMgr
 }
 
-// RunWatcher creates a QueueController and executes watchers
+// V1TypePointer return a valid type pointer derived from the
+// K8sAPIName
+func V1TypePointer(watchTypeName K8sAPIName) (v1TypePointer pkgruntime.Object) {
+	switch watchTypeName {
+	case "services":
+		v1TypePointer = &v1.Service{}
+	case "nodes":
+		v1TypePointer = &v1.Node{}
+	case "pods":
+		v1TypePointer = &v1.Pod{}
+	case "endpoints":
+		v1TypePointer = &v1.Endpoints{}
+	default:
+		panic("V1TypePointer")
+	}
+	return
+}
 
+// NewQueueMgrListOpt takes a type string (services, pods, nodes, ...)  and a
+// *kubernetes.Clientset, v1TypePointer is the type of the reference
+// object &v1.Service{}, &v1.Node{}...
+func NewQueueMgrListOpt(watchTypeName K8sAPIName, clientset *kubernetes.Clientset, options *metav1.ListOptions) *QueueMgr {
+	var queueMgr = &QueueMgr{}
+	queueMgr.ListWatch = cache.NewListWatchFromClient(clientset.CoreV1().RESTClient(), string(watchTypeName), v1.NamespaceAll, fields.Everything())
+	// create the workqueue
+	ratelimiter := workqueue.DefaultControllerRateLimiter()
+	queue := workqueue.NewRateLimitingQueue(ratelimiter)
+	var v1TypePointer = V1TypePointer(watchTypeName)
+
+	watcher := queueMgr.ListWatch.Watch
+	lister := queueMgr.ListWatch.List
+	newWatch := func(ignored metav1.ListOptions) (watch.Interface, error) {
+		return watcher(*options)
+	}
+
+	newList := func(ignored metav1.ListOptions) (pkgruntime.Object, error) {
+		return lister(*options)
+	}
+
+	queueMgr.ListWatch = &cache.ListWatch{ListFunc: newList, WatchFunc: newWatch}
+
+	indexer, controller := cache.NewIndexerInformer(queueMgr.ListWatch, v1TypePointer, 0, cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			key, err := cache.MetaNamespaceKeyFunc(obj)
+			if err == nil {
+				queue.Add(QueueItem{Key: key, K8sAPIName: watchTypeName, EventType: ADD})
+			}
+		},
+		UpdateFunc: func(old interface{}, new interface{}) {
+			key, err := cache.MetaNamespaceKeyFunc(new)
+			if err == nil {
+				queue.Add(QueueItem{Key: key, K8sAPIName: watchTypeName, EventType: UPDATE})
+			}
+		},
+		DeleteFunc: func(obj interface{}) {
+			// IndexerInformer uses a delta queue, therefore for deletes we have to use this
+			// event function.
+			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
+			if err == nil {
+				queue.Add(QueueItem{Key: key, K8sAPIName: watchTypeName, EventType: DELETE})
+			}
+		},
+	}, cache.Indexers{})
+
+	queueMgr.QueueController = NewQueueController(watchTypeName, queue, indexer, controller)
+
+	return queueMgr
+}
+
+// Run creates a QueueController and executes watchers
 func (queueMgr *QueueMgr) Run() {
 
 	// Now let's start the controller

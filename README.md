@@ -3,8 +3,8 @@
 ---
 Little load balancer
 
-- connect to kubernetes cluster
-- watch services
+- Connect to kubernetes cluster
+- Watch services
   - when the Type=LoadBalancer 
     - load endpoints for the service name/namespace
     - create a forward service listening on loadbalancer IP + port
@@ -15,6 +15,13 @@ Little load balancer
   - when loadBalancerIP is set e.g. if the ip hasn't been set it will
     be added to the ethernet device specified as the LinkDevice
     e.g. `--linkdevice eth0`
+- Watch nodes
+  - add or remove nodes from events in the queue
+  - use nodes with the label `node-role.kubernetes.io/worker`
+  - during node creation or with the label command add 
+    --node-labels=node-role.kubernetes.io/worker
+  - use the ExternalID from the node spec as the IP endpoint
+
 
 Manage routes / addresses for external ip addresses
 

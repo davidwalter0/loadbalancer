@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/davidwalter0/go-mutex"
@@ -32,7 +33,9 @@ type Mgr struct {
 	Mutex     *mutex.Mutex
 	EnvCfg    *share.ServerCfg
 	*kubernetes.Clientset
-	InCluster bool
+	InCluster      bool
+	NodeWatcher    *watch.QueueMgr
+	ServiceWatcher *watch.QueueMgr
 }
 
 // NewMgr create a new Mgr
@@ -54,33 +57,14 @@ func (mgr *Mgr) Monitor() func() {
 
 // Run primary processing loop
 func (mgr *Mgr) Run() {
-	serviceWatcher := watch.NewQueueMgr(watch.ServiceAPIName, mgr.Clientset)
-	go serviceWatcher.Run()
+	listOpts := &metav1.ListOptions{LabelSelector: "node-role.kubernetes.io/worker"}
+	mgr.NodeWatcher = watch.NewQueueMgrListOpt(watch.NodeAPIName, mgr.Clientset, listOpts)
+	mgr.ServiceWatcher = watch.NewQueueMgr(watch.ServiceAPIName, mgr.Clientset)
 
-	for {
-		select {
-		case item, ok := <-serviceWatcher.QueueItems:
-			if !ok {
-				log.Fatal("error in Services Channel")
-			} else {
-				switch item.EventType {
-				case watch.ADD:
-					fallthrough
-				case watch.UPDATE:
-					Service := item.Interface.(*v1.Service)
-					fmt.Printf("Event %s for service %s with type %s\n", item.Key, Service.Spec.Type, item.EventType)
-					switch Service.Spec.Type {
-					case "LoadBalancer":
-						mgr.UpdatePipe(Service)
-					default:
-						mgr.RemovePipe(item.Key)
-					}
-				case watch.DELETE:
-					mgr.RemovePipe(item.Key)
-				}
-			}
-		}
-	}
+	go mgr.NodeWatch()
+	go mgr.ServiceWatch()
+
+	select {}
 }
 
 // RemovePipe adds/updates or removes a pipe definition
@@ -137,4 +121,57 @@ func Listen(address string) (listener net.Listener) {
 		time.Sleep(time.Second * time.Duration(i))
 	}
 	panic("listen failed: " + address)
+}
+
+// NodeWatch manage node workers list dynamically
+func (mgr *Mgr) NodeWatch() {
+	go mgr.NodeWatcher.Run()
+	for {
+		select {
+		case item, ok := <-mgr.NodeWatcher.QueueItems:
+			if ok {
+				Node := item.Interface.(*v1.Node)
+				fmt.Printf("Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
+				switch item.EventType {
+				case watch.ADD:
+					fallthrough
+				case watch.UPDATE:
+					nodeList.AddNode(Node.Spec.ExternalID)
+				case watch.DELETE:
+					nodeList.RemoveNode(Node.Spec.ExternalID)
+				}
+			} else {
+				log.Fatal("Error in Nodes Channel")
+			}
+		}
+	}
+}
+
+// ServiceWatch watch.QueueMgr for LoadBalancers
+func (mgr *Mgr) ServiceWatch() {
+	go mgr.ServiceWatcher.Run()
+	for {
+		select {
+		case item, ok := <-mgr.ServiceWatcher.QueueItems:
+			if ok {
+				switch item.EventType {
+				case watch.ADD:
+					fallthrough
+				case watch.UPDATE:
+					Service := item.Interface.(*v1.Service)
+					fmt.Printf("Event %s for service %s with type %s\n", item.Key, Service.Spec.Type, item.EventType)
+					switch Service.Spec.Type {
+					case "LoadBalancer":
+						mgr.UpdatePipe(Service)
+					default:
+						mgr.RemovePipe(item.Key)
+					}
+				case watch.DELETE:
+					mgr.RemovePipe(item.Key)
+				}
+			} else {
+				log.Fatal("error in Services Channel")
+			}
+		}
+	}
 }

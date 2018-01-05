@@ -92,4 +92,5 @@ func main() {
 		// - And/or cast to StatusError and use its properties like e.g. ErrStatus.Message
 		time.Sleep(10 * time.Second)
 	}
+
 }

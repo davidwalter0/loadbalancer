@@ -8,6 +8,8 @@ import (
 	"github.com/davidwalter0/llb/ipmgr"
 )
 
+var nodeList = NewNodeList()
+
 // ServiceKey from v1.Service info for map lookup in listeners
 func ServiceKey(Service *v1.Service) string {
 	return Service.ObjectMeta.Namespace + "/" + Service.ObjectMeta.Name
@@ -41,20 +43,16 @@ func ServiceSourceIP(Service *v1.Service) (IP string) {
 	return
 }
 
-// ServiceSink IP:NodePort from v1.Service
+// ServiceSinks IP:NodePort from v1.Service
 func ServiceSinks(Service *v1.Service) (Sink []string) {
-	var IP string
+	// var IP string
 	var NodePort int32
 	for _, port := range Service.Spec.Ports {
 		if port.NodePort > 0 {
 			NodePort = port.NodePort
-			// if len(Service.Spec.LoadBalancerIP) > 0 {
-			// 	IP = Service.Spec.LoadBalancerIP
-			// } else {
-			// 	IP = "0.0.0.0"
-			// }
-			for _, IP = range []string{"172.17.4.201", "172.17.4.202"} {
-				Sink = append(Sink, fmt.Sprintf("%s:%d", IP, NodePort))
+			nodes := nodeList.GetNodes()
+			for _, node := range nodes {
+				Sink = append(Sink, fmt.Sprintf("%s:%d", node, NodePort))
 			}
 			break
 		}
