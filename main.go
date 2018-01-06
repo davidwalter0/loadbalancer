@@ -1,13 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
-
-	"github.com/golang/glog"
 
 	"github.com/davidwalter0/llb/global"
 	"github.com/davidwalter0/llb/kubeconfig"
@@ -34,16 +33,24 @@ var Version string
 func init() {
 	array := strings.Split(os.Args[0], "/")
 	me := array[len(array)-1]
-	fmt.Printf("%s %s: Version %s version build %s commit %s\n", log.Prefix(), me, Version, Build, Commit)
+	log.SetOutput(os.Stderr)
+	log.Printf("%s: Version %s version build %s commit %s\n", me, Version, Build, Commit)
+	log.SetOutput(os.Stdout)
 }
 
 func main() {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, os.Kill)
+
 	// creates the clientset
 	clientset := kubeconfig.NewClientset(envCfg.Kubeconfig)
 	if clientset == nil {
-		glog.Fatal("Kubernetes connection failed")
+		log.Fatal("Kubernetes connection failed")
 	}
 	var mgr *mgmt.Mgr = mgmt.NewMgr(envCfg, clientset)
 	go mgr.Run()
-	select {}
+	select {
+	case <-signals:
+		mgr.Shutdown()
+	}
 }

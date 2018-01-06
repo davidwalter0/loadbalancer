@@ -1,3 +1,18 @@
+- validate device reference counting when the device is already
+  present but only one service uses the device and it's not the
+  primary link device address
+- add event filter to ignore node updates not for up or down events
+- update service with external address field set to load balancer ip when running
+  - Update(*v1.Service) (*v1.Service, error)
+
+``` 
+
+// Update takes the representation of a service and updates it
+// Returns the server's representation of the service, and an error, 
+// if there is any.
+func (c *services) Update(service *v1.Service) (result *v1.Service, err error) {
+```
+
 *Use at your own risk Alpha software / pre-release*
 
 ---
@@ -135,6 +150,21 @@ are no more listeners on the ip.
 `ip addr add ip/bits dev linkdevice`
 
 ---
+*List*
+
+List services and their type
+
+```
+printf "$(kubectl get svc --all-namespaces --output=go-template --template='{{range .items}}{{.metadata.namespace}}/{{.metadata.name}}:{{.spec.type}} LB:{{ .spec.loadBalancerIP }} ExternalIPs{{.spec.externalIPs}}\n{{end}}')"
+```
+
+Service addresses for load balancers
+
+```
+printf "$(kubectl get svc --all-namespaces --output=go-template --template='{{range .items}}{{if eq .spec.type "LoadBalancer"}}{{.metadata.namespace}}/{{.metadata.name}}:{{.spec.type}} LB:{{ .spec.loadBalancerIP }} ExternalIPs{{.spec.externalIPs}}\n{{end}}{{end}}')"
+```
+
+---
 *Dashboard*
 
 Another example enabling a routable dashboard assuming you've already
@@ -164,20 +194,34 @@ node labels
 
 More things not yet completed
 
-- [ ]  load active devices
-- [x]  load active primary ip address per device
+- [x] Load active devices (use --linkdevice to specify the active
+  device)
+- [x] Load active primary ip address per device
   - must specify the device on the command line --linkdevice
+- [x]  set default ip address per device
+- [x] Check for new load balancer request's ip match to a device
+  default subnet and add if not found
+- [x] Catch/recover from errors associated with missing IP, illegal
+  IP/CIDR, address in use and report accordingly
+  - check valid ip address ignore if invalid
+- [x] Get endpoint node list by service
+  - marry nodes to nodeports as service endpoints for out of cluster
+- [x] Create endpoint watcher similar to service watch
+  - out of cluster use node watcher
+- [ ] Check ability to run in cluster with host network privilege
+  and a bridge interface specified as --linkdevice
+  - label the node `node-role.kubernetes.io/load-balancer`
+  - run a statefulset of one instance
+  - use the bridge interface device to apply the changes
+- [x] All namespaces through one load balancer
+- [x] Update service ExternalIPs with the ip address of the load balancer
+- [x] Add signal handler to cleanup ExternalIPs on shutown sigint,
+  sigterm
+- [ ] allow multiple ports per service to be forwarded
 
-- [ ]  set default ip address per device
-- [ ]  check for new load balancer request's ip match to a device default
-    subnet and add if not found
-- [ ]  catch/recover from errors associated with missing IP, illegal
-    IP/CIDR, address in use and report accordingly
-- [ ]  get endpoint node list by service
-- [ ]  create endpoint watcher similar to service watch
-- [ ]  check ability to run in cluster with host net/privileges
-- [ ]  allow per namespace load balancer?
-- [ ]  allow multiple ports per service to be forwarded
+--- 
 
-- [ ] research network route/device changes for both insertion of
-    physical hardware or address changes
+*Possible Future Work*
+
+- [ ] research netlink network route/device watcher for both insertion
+  of physical hardware or default address change

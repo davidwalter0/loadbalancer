@@ -1,6 +1,7 @@
 package listener
 
 import (
+	"encoding/json"
 	"log"
 	"net"
 	// "sync"
@@ -8,7 +9,9 @@ import (
 	"time"
 
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 
 	"github.com/davidwalter0/go-mutex"
 	"github.com/davidwalter0/llb/helper"
@@ -92,6 +95,7 @@ func (ml *ManagedListener) Open() {
 		defer trace.Tracer.ScopedTrace()()
 		go ml.Listening()
 		go ml.PipeMapHandler()
+		ml.SetExternalIP()
 	}
 }
 
@@ -162,14 +166,14 @@ func (ml *ManagedListener) Listening() {
 		var err error
 		var SourceConn, SinkConn net.Conn
 		if SourceConn, err = ml.Accept(); err != nil {
-			log.Printf("Connection failed: %v\n", err)
+			log.Printf("Source connection failed: %v\n", err)
 			break
 		}
 		sink := ml.NextEndPoint()
 		log.Println(sink)
 		SinkConn, err = net.Dial("tcp", sink)
 		if err != nil {
-			log.Printf("Connection failed: %v\n", err)
+			log.Printf("Sink connection failed: %v\n", err)
 			break
 		}
 		var pipe = pipe.NewPipe(ml.Key, ml.MapAdd, ml.MapRm, ml.Mutex, SourceConn, SinkConn, &ml.Definition)
@@ -195,5 +199,65 @@ func (ml *ManagedListener) Close() {
 				delete(ml.Pipes, pipe)
 			}
 		}
+		ml.RemoveExternalIP()
+	}
+}
+
+// SetExternalIP for service spec
+func (ml *ManagedListener) SetExternalIP() {
+	if ml.Clientset == nil {
+		panic("Clientset nil, can't UpdateExternalIP")
+	}
+	client := ml.Clientset.CoreV1().Services(ml.V1Service.ObjectMeta.Namespace)
+	ml.refreshV1ServiceSpec(client)
+	var ip = ipmgr.IP
+	if ml.CIDR != nil && len(ml.CIDR.IP) > 0 {
+		ip = ml.CIDR.IP
+	}
+	ml.V1Service.Spec.ExternalIPs = []string{ip}
+	log.Println("Setting ExternalIP", ml.V1Service.Spec.ExternalIPs)
+	client.Update(ml.V1Service)
+	ml.refreshV1ServiceSpec(client)
+}
+
+func (ml *ManagedListener) refreshV1ServiceSpec(client v1core.ServiceInterface) {
+	service, err := client.Get(ml.V1Service.ObjectMeta.Name, metav1.GetOptions{})
+	if err == nil {
+		ml.V1Service = service
+	}
+}
+
+// RemoveExternalIP from service spec
+func (ml *ManagedListener) RemoveExternalIP() {
+	if ml.Clientset == nil {
+		panic("Clientset nil, can't UpdateExternalIP")
+	}
+	client := ml.Clientset.CoreV1().Services(ml.V1Service.ObjectMeta.Namespace)
+	log.Println("Removing ExternalIP", ml.V1Service.Spec.ExternalIPs)
+	ml.refreshV1ServiceSpec(client)
+	ml.V1Service.Spec.ExternalIPs = []string{}
+	// ml.V1Service.ObjectMeta.Annotations = make(map[string]string)
+	_, err := client.Update(ml.V1Service)
+	if err != nil {
+		log.Println("Error Removing ExternalIPs", err)
+		if ml.Debug {
+			dumpJSON(ml.V1Service)
+		}
+	}
+	for i := 0; i < 3 && err != nil; i++ {
+		log.Printf("Removing ExternalIPs Retry %d %v", i, err)
+		time.Sleep(time.Second)
+		ml.refreshV1ServiceSpec(client)
+		ml.V1Service.Spec.ExternalIPs = []string{}
+		_, err = client.Update(ml.V1Service)
+
+	}
+}
+
+func dumpJSON(obj interface{}) {
+	if jsonText, err := json.MarshalIndent(obj, "", "  "); err == nil {
+		log.Println(string(jsonText))
+	} else {
+		log.Println(err)
 	}
 }

@@ -39,38 +39,38 @@ func (mips *LoadBalancerIPs) AddAddr(IPNet, LinkDevice string) {
 	defer trace.Tracer.ScopedTrace()()
 	if Debug {
 		for key := range *mips {
-			fmt.Println(key)
+			log.Println(key)
 		}
 	}
 	if linkAddr, ok := (*mips)[IPNet]; !ok {
 		if link, err := netlink.LinkByName(LinkDevice); err == nil {
 			if Debug {
-				fmt.Printf("AddAddr %v %v link: %v\n", IPNet, LinkDevice, link)
+				log.Printf("AddAddr %v %v link: %v\n", IPNet, LinkDevice, link)
 			}
 			if addr, err := netlink.ParseAddr(IPNet); err == nil {
 				linkAddr = &LinkAddr{Addr: addr, Count: 1}
 				if Debug {
-					fmt.Printf("AddAddr %v %v LinkAddr: %v\n", IPNet, LinkDevice, *linkAddr)
+					log.Printf("AddAddr %v %v LinkAddr: %v\n", IPNet, LinkDevice, *linkAddr)
 				}
 				if !_InTest_ {
 					if err := netlink.AddrAdd(link, addr); err == nil {
 						(*mips)[IPNet] = linkAddr
 					} else {
 						if Debug {
-							fmt.Println("Warning: managing existing ip", IPNet, LinkDevice)
-							fmt.Println(err)
+							log.Println("Warning: managing existing ip", IPNet, LinkDevice)
+							log.Println(err)
 						}
 						(*mips)[IPNet] = linkAddr
 					}
 				}
 				if Debug {
-					fmt.Printf("AddAddr %v %v LinkAddr: %v Count: %d\n", IPNet, LinkDevice, *linkAddr, linkAddr.Count)
+					log.Printf("AddAddr %v %v LinkAddr: %v Count: %d\n", IPNet, LinkDevice, *linkAddr, linkAddr.Count)
 				}
 			} else {
-				fmt.Println(err)
+				log.Println(err)
 			}
 		} else {
-			fmt.Println(err)
+			log.Println(err)
 		}
 	} else {
 		linkAddr.Count++
@@ -94,31 +94,31 @@ func (mips *LoadBalancerIPs) RemoveAddr(IPNet, LinkDevice string) {
 	defer trace.Tracer.ScopedTrace()()
 	if Debug {
 		for key := range *mips {
-			fmt.Println(key)
+			log.Println(key)
 		}
 	}
 	if linkAddr, ok := (*mips)[IPNet]; ok {
 		if Debug {
-			fmt.Printf("RemoveAddr %v %v LinkAddr: %v Count: %d\n", IPNet, LinkDevice, *linkAddr, linkAddr.Count)
+			log.Printf("RemoveAddr %v %v LinkAddr: %v Count: %d\n", IPNet, LinkDevice, *linkAddr, linkAddr.Count)
 		}
 		addr := linkAddr.Addr
 		linkAddr.Count--
 		if linkAddr.Count <= 0 {
 			if Debug {
-				fmt.Println("RemoveAddr", addr, ok)
+				log.Println("RemoveAddr", addr, ok)
 			}
 			if link, err := netlink.LinkByName(LinkDevice); err == nil {
 				if Debug {
-					fmt.Printf("RemoveAddr %v %v link: %v\n", IPNet, LinkDevice, link)
-					fmt.Println(addr, link)
+					log.Printf("RemoveAddr %v %v link: %v\n", IPNet, LinkDevice, link)
+					log.Println(addr, link)
 				}
 				if link != nil && !_InTest_ {
 					if err := netlink.AddrDel(link, addr); err != nil {
-						fmt.Println(err)
+						log.Println(err)
 					}
 				}
 			} else {
-				fmt.Println(err)
+				log.Println(err)
 			}
 			delete(*mips, IPNet)
 		}

@@ -1,7 +1,7 @@
 package ipmgr
 
 import (
-	"fmt"
+	"log"
 
 	"github.com/vishvananda/netlink"
 )
@@ -45,7 +45,7 @@ func LinkAddrListByName(linkName string) (Addrs []netlink.Addr) {
 			}
 		}
 	} else {
-		fmt.Println(err)
+		log.Println(err)
 	}
 	return
 }
@@ -53,25 +53,25 @@ func LinkAddrListByName(linkName string) (Addrs []netlink.Addr) {
 // LinkIPv4AddrListByName addresses for one device for ipv4
 func LinkIPv4AddrListByName(linkName string) (Addrs []netlink.Addr) {
 	if Debug {
-		fmt.Println(linkName)
+		log.Println(linkName)
 	}
 	if link, err := netlink.LinkByName(linkName); err == nil {
 		if Debug {
-			fmt.Println(link, err)
+			log.Println(link, err)
 		}
 		if addrs, err := netlink.AddrList(link, netlink.FAMILY_V4); err == nil {
 			if Debug {
-				fmt.Println(addrs, err)
+				log.Println(addrs, err)
 			}
 			for _, addr := range addrs {
 				if Debug {
-					fmt.Println(addr)
+					log.Println(addr)
 				}
 				Addrs = append(Addrs, addr)
 			}
 		}
 	} else {
-		fmt.Println(err)
+		log.Println(err)
 	}
 	return
 }
@@ -85,7 +85,7 @@ func LinkIPv6AddrListByName(linkName string) (Addrs []netlink.Addr) {
 			}
 		}
 	} else {
-		fmt.Println(err)
+		log.Println(err)
 	}
 	return
 }

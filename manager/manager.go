@@ -22,6 +22,7 @@ import (
 )
 
 var managedLBIPs ipmgr.LoadBalancerIPs = make(ipmgr.LoadBalancerIPs)
+var shutdown = make(chan struct{})
 
 // retries number of attempts
 var retries = 5
@@ -46,8 +47,18 @@ func NewMgr(EnvCfg *share.ServerCfg, Clientset *kubernetes.Clientset) *Mgr {
 		Listeners: make(map[string]*listener.ManagedListener),
 		Mutex:     &mutex.Mutex{},
 		EnvCfg:    EnvCfg,
-		Clientset: Clientset,
 		InCluster: false,
+		Clientset: Clientset,
+	}
+}
+
+// Shutdown this manager
+func (mgr *Mgr) Shutdown() {
+	close(shutdown)
+	for key, ml := range mgr.Listeners {
+		log.Println("Shutting down listener for", key)
+		ml.RemoveExternalIP()
+		ml.Close()
 	}
 }
 
@@ -68,7 +79,9 @@ func (mgr *Mgr) Run() {
 	go mgr.NodeWatch()
 	go mgr.ServiceWatch()
 
-	select {}
+	select {
+	case <-shutdown:
+	}
 }
 
 // RemovePipe adds/updates or removes a pipe definition
@@ -133,11 +146,14 @@ func (mgr *Mgr) NodeWatch() {
 	go mgr.NodeWatcher.Run(1, 1)
 	for {
 		select {
+		case <-shutdown:
+			log.Println("NodeWatch shutting down...")
+			return
 		case item, ok := <-mgr.NodeWatcher.QueueItems:
 			if ok {
 				Node := item.Interface.(*v1.Node)
 				if mgr.EnvCfg.Debug {
-					fmt.Printf("Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
+					log.Printf("Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
 				}
 				switch item.EventType {
 				case watch.ADD:
@@ -160,6 +176,9 @@ func (mgr *Mgr) ServiceWatch() {
 	go mgr.ServiceWatcher.Run(1, 1)
 	for {
 		select {
+		case <-shutdown:
+			log.Println("ServiceWatch shutting down...")
+			return
 		case item, ok := <-mgr.ServiceWatcher.QueueItems:
 			if ok {
 				switch item.EventType {
@@ -168,7 +187,7 @@ func (mgr *Mgr) ServiceWatch() {
 				case watch.UPDATE:
 					Service := item.Interface.(*v1.Service)
 					if mgr.EnvCfg.Debug {
-						fmt.Printf("Event %s for service %s with type %s\n", item.Key, Service.Spec.Type, item.EventType)
+						log.Printf("Event %s for service %s with type %s\n", item.Key, Service.Spec.Type, item.EventType)
 					}
 					switch Service.Spec.Type {
 					case "LoadBalancer":
@@ -177,6 +196,7 @@ func (mgr *Mgr) ServiceWatch() {
 						mgr.RemovePipe(item.Key)
 					}
 				case watch.DELETE:
+					log.Printf("Event %s for type %s\n", item.Key, item.EventType)
 					mgr.RemovePipe(item.Key)
 				}
 			} else {

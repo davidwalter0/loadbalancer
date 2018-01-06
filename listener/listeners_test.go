@@ -84,7 +84,7 @@ func TestDefinition(t *testing.T) {
 
 func TestDefinitionMap(t *testing.T) {
 	m := _testPipe1
-	// fmt.Println(m)
+	// log.Println(m)
 	equal := m["Equal"]
 	notequal := m["!Equal"]
 	if !equal[0].Equal(equal[1]) {
