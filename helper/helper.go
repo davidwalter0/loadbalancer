@@ -1,14 +1,15 @@
-package mgr
+package helper
 
 import (
 	"fmt"
+	"log"
+	"time"
 
 	"k8s.io/api/core/v1"
 
 	"github.com/davidwalter0/llb/ipmgr"
+	"github.com/davidwalter0/llb/nodemgr"
 )
-
-var nodeList = NewNodeList()
 
 // ServiceKey from v1.Service info for map lookup in listeners
 func ServiceKey(Service *v1.Service) string {
@@ -45,12 +46,17 @@ func ServiceSourceIP(Service *v1.Service) (IP string) {
 
 // ServiceSinks IP:NodePort from v1.Service
 func ServiceSinks(Service *v1.Service) (Sink []string) {
+	nodeList := nodemgr.NodeListPtr()
 	// var IP string
 	var NodePort int32
 	for _, port := range Service.Spec.Ports {
 		if port.NodePort > 0 {
 			NodePort = port.NodePort
-			nodes := nodeList.GetNodes()
+			var nodes []string
+			for nodes = nodeList.GetNodes(); len(nodes) == 0; nodes = nodeList.GetNodes() {
+				log.Println("Node List is empty, sleep a bit")
+				time.Sleep(time.Second)
+			}
 			for _, node := range nodes {
 				Sink = append(Sink, fmt.Sprintf("%s:%d", node, NodePort))
 			}

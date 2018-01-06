@@ -13,7 +13,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	// "github.com/davidwalter0/llb/chanqueue"
 	"github.com/davidwalter0/go-cfg"
 )
 
@@ -74,7 +73,7 @@ func (envCfg *ServerCfg) Read() {
 	envCfg.TLSCfg.Read()
 	cfg.Finalize()
 	if len(envCfg.LinkDevice) == 0 {
-		fmt.Fprintln(os.Stderr, "Error: ether iface link device not set")
+		fmt.Fprintln(os.Stderr, log.Prefix(), "Error: ether iface link device not set")
 		cfg.Usage()
 		os.Exit(1)
 	}

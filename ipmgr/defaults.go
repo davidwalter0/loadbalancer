@@ -1,8 +1,9 @@
 package ipmgr
 
-import (
-	"github.com/davidwalter0/llb/global"
-)
+import ()
+
+// initialized by caller
+// or for tests    testInitializer(c)
 
 // IP default link IP
 var IP string
@@ -16,9 +17,5 @@ var LinkDevice string
 // DefaultCIDR default link device to use for external ip addresses
 var DefaultCIDR *CIDR
 
-func init() {
-	DefaultCIDR = LinkDefaultCIDR(global.Cfg().LinkDevice)
-	IP = DefaultCIDR.IP
-	Bits = DefaultCIDR.Bits
-	LinkDevice = global.Cfg().LinkDevice
-}
+// Debug set by initializer
+var Debug bool

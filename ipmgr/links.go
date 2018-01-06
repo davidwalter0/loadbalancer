@@ -52,13 +52,21 @@ func LinkAddrListByName(linkName string) (Addrs []netlink.Addr) {
 
 // LinkIPv4AddrListByName addresses for one device for ipv4
 func LinkIPv4AddrListByName(linkName string) (Addrs []netlink.Addr) {
-	fmt.Println(linkName)
+	if Debug {
+		fmt.Println(linkName)
+	}
 	if link, err := netlink.LinkByName(linkName); err == nil {
-		fmt.Println(link, err)
+		if Debug {
+			fmt.Println(link, err)
+		}
 		if addrs, err := netlink.AddrList(link, netlink.FAMILY_V4); err == nil {
-			fmt.Println(addrs, err)
+			if Debug {
+				fmt.Println(addrs, err)
+			}
 			for _, addr := range addrs {
-				fmt.Println(addr)
+				if Debug {
+					fmt.Println(addr)
+				}
 				Addrs = append(Addrs, addr)
 			}
 		}
@@ -97,7 +105,6 @@ func LinkDefaultAddr(link string) *netlink.Addr {
 // bits/routes
 func LinkDefaultCIDR(link string) *CIDR {
 	for _, addr := range LinkIPv4AddrListByName(link) {
-		fmt.Println("LinkDefaultCIDR", addr)
 		return Addr2CIDR(addr)
 	}
 	return nil

@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/davidwalter0/go-mutex"
-	"github.com/davidwalter0/llb/global"
 	"github.com/davidwalter0/llb/tracer"
 
 	"github.com/vishvananda/netlink"
@@ -29,39 +28,42 @@ type LoadBalancerIPs map[string]*LinkAddr
 // AddAddr adds an address to a network LinkDevice
 func (mips *LoadBalancerIPs) AddAddr(IPNet, LinkDevice string) {
 	if net.ParseIP(strings.Split(IPNet, "/")[0]) == nil {
-		log.Printf("AddAddr skipping invalid IPAddr:%v on LinkDevice:%v\n", IPNet, LinkDevice)
+		if Debug {
+			log.Printf("AddAddr skipping invalid IPAddr:%v on LinkDevice:%v\n", IPNet, LinkDevice)
+		}
 		return
 	}
 
 	log.Printf("AddAddr %v %v\n", IPNet, LinkDevice)
 	defer monitor()()
 	defer trace.Tracer.ScopedTrace()()
-	for key := range *mips {
-		fmt.Println(key)
+	if Debug {
+		for key := range *mips {
+			fmt.Println(key)
+		}
 	}
-
 	if linkAddr, ok := (*mips)[IPNet]; !ok {
 		if link, err := netlink.LinkByName(LinkDevice); err == nil {
-			if global.Cfg().Debug {
+			if Debug {
 				fmt.Printf("AddAddr %v %v link: %v\n", IPNet, LinkDevice, link)
 			}
 			if addr, err := netlink.ParseAddr(IPNet); err == nil {
 				linkAddr = &LinkAddr{Addr: addr, Count: 1}
-				if global.Cfg().Debug {
+				if Debug {
 					fmt.Printf("AddAddr %v %v LinkAddr: %v\n", IPNet, LinkDevice, *linkAddr)
 				}
 				if !_InTest_ {
 					if err := netlink.AddrAdd(link, addr); err == nil {
 						(*mips)[IPNet] = linkAddr
 					} else {
-						if global.Cfg().Debug {
+						if Debug {
 							fmt.Println("Warning: managing existing ip", IPNet, LinkDevice)
 							fmt.Println(err)
 						}
 						(*mips)[IPNet] = linkAddr
 					}
 				}
-				if global.Cfg().Debug {
+				if Debug {
 					fmt.Printf("AddAddr %v %v LinkAddr: %v Count: %d\n", IPNet, LinkDevice, *linkAddr, linkAddr.Count)
 				}
 			} else {
@@ -77,6 +79,12 @@ func (mips *LoadBalancerIPs) AddAddr(IPNet, LinkDevice string) {
 
 // RemoveAddr from networks
 func (mips *LoadBalancerIPs) RemoveAddr(IPNet, LinkDevice string) {
+	if net.ParseIP(strings.Split(IPNet, "/")[0]) == nil {
+		if Debug {
+			log.Printf("AddAddr skipping invalid IPAddr:%v on LinkDevice:%v\n", IPNet, LinkDevice)
+		}
+		return
+	}
 	log.Printf("RemoveAddr %v %v\n", IPNet, LinkDevice)
 	if DefaultCIDR.String() == IPNet {
 		log.Printf("RemoveAddr Skips IPNet/CIDR rule %v on device %v\n", IPNet, LinkDevice)
@@ -84,21 +92,23 @@ func (mips *LoadBalancerIPs) RemoveAddr(IPNet, LinkDevice string) {
 	}
 	defer monitor()()
 	defer trace.Tracer.ScopedTrace()()
-	for key := range *mips {
-		fmt.Println(key)
+	if Debug {
+		for key := range *mips {
+			fmt.Println(key)
+		}
 	}
 	if linkAddr, ok := (*mips)[IPNet]; ok {
-		if global.Cfg().Debug {
+		if Debug {
 			fmt.Printf("RemoveAddr %v %v LinkAddr: %v Count: %d\n", IPNet, LinkDevice, *linkAddr, linkAddr.Count)
 		}
 		addr := linkAddr.Addr
 		linkAddr.Count--
 		if linkAddr.Count <= 0 {
-			if global.Cfg().Debug {
+			if Debug {
 				fmt.Println("RemoveAddr", addr, ok)
 			}
 			if link, err := netlink.LinkByName(LinkDevice); err == nil {
-				if global.Cfg().Debug {
+				if Debug {
 					fmt.Printf("RemoveAddr %v %v link: %v\n", IPNet, LinkDevice, link)
 					fmt.Println(addr, link)
 				}

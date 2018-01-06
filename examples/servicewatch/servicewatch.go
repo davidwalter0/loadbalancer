@@ -48,7 +48,7 @@ func main() {
 	}
 
 	serviceWatcher := watch.NewQueueMgr(watch.ServiceAPIName, clientset)
-	go serviceWatcher.Run(2, 2)
+	go serviceWatcher.Run(1, 1)
 
 	time.Sleep(10 * time.Second)
 	for i := 0; i < 100; i++ {

@@ -12,8 +12,10 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/davidwalter0/go-mutex"
+	"github.com/davidwalter0/llb/helper"
 	"github.com/davidwalter0/llb/ipmgr"
 	"github.com/davidwalter0/llb/listener"
+	"github.com/davidwalter0/llb/nodemgr"
 	"github.com/davidwalter0/llb/share"
 	"github.com/davidwalter0/llb/tracer"
 	"github.com/davidwalter0/llb/watch"
@@ -57,6 +59,8 @@ func (mgr *Mgr) Monitor() func() {
 
 // Run primary processing loop
 func (mgr *Mgr) Run() {
+	log.Println("LinkDefaultCIDR", ipmgr.DefaultCIDR)
+
 	listOpts := &metav1.ListOptions{LabelSelector: "node-role.kubernetes.io/worker"}
 	mgr.NodeWatcher = watch.NewQueueMgrListOpt(watch.NodeAPIName, mgr.Clientset, listOpts)
 	mgr.ServiceWatcher = watch.NewQueueMgr(watch.ServiceAPIName, mgr.Clientset)
@@ -84,11 +88,11 @@ func (mgr *Mgr) RemovePipe(Key string) {
 func (mgr *Mgr) UpdatePipe(Service *v1.Service) {
 	defer mgr.Mutex.MonitorTrace("Update")()
 	defer trace.Tracer.ScopedTrace()()
-	var Key = ServiceKey(Service)
+	var Key = helper.ServiceKey(Service)
 	if current, ok := mgr.Listeners[Key]; !ok {
 		managedListener := NewManagedListenerFromV1Service(Service, mgr.EnvCfg, mgr.Clientset)
 		managedLBIPs.AddAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
-		managedListener.Listener = Listen(ServiceSource(Service))
+		managedListener.Listener = Listen(helper.ServiceSource(Service))
 		mgr.Listeners[Key] = managedListener
 		mgr.Listeners[Key].Open()
 	} else {
@@ -98,7 +102,7 @@ func (mgr *Mgr) UpdatePipe(Service *v1.Service) {
 			managedLBIPs.RemoveAddr(current.CIDR.String(), current.CIDR.LinkDevice)
 			mgr.Listeners[Key] = managedListener
 			managedLBIPs.AddAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
-			managedListener.Listener = Listen(ServiceSource(Service))
+			managedListener.Listener = Listen(helper.ServiceSource(Service))
 			mgr.Listeners[Key].Open()
 		}
 	}
@@ -125,7 +129,8 @@ func Listen(address string) (listener net.Listener) {
 
 // NodeWatch manage node workers list dynamically
 func (mgr *Mgr) NodeWatch() {
-	go mgr.NodeWatcher.Run(2, 2)
+	nodeList := nodemgr.NodeListPtr()
+	go mgr.NodeWatcher.Run(1, 1)
 	for {
 		select {
 		case item, ok := <-mgr.NodeWatcher.QueueItems:
@@ -136,9 +141,10 @@ func (mgr *Mgr) NodeWatch() {
 				}
 				switch item.EventType {
 				case watch.ADD:
-					fallthrough
-				case watch.UPDATE:
 					nodeList.AddNode(Node.Spec.ExternalID)
+				case watch.UPDATE:
+					// Expect that nodes can't change their ip address w/o
+					// destroy / create, ignore UPDATE for now
 				case watch.DELETE:
 					nodeList.RemoveNode(Node.Spec.ExternalID)
 				}
@@ -151,7 +157,7 @@ func (mgr *Mgr) NodeWatch() {
 
 // ServiceWatch watch.QueueMgr for LoadBalancers
 func (mgr *Mgr) ServiceWatch() {
-	go mgr.ServiceWatcher.Run(2, 2)
+	go mgr.ServiceWatcher.Run(1, 1)
 	for {
 		select {
 		case item, ok := <-mgr.ServiceWatcher.QueueItems:

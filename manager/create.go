@@ -5,6 +5,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/davidwalter0/go-mutex"
+	"github.com/davidwalter0/llb/helper"
 	"github.com/davidwalter0/llb/ipmgr"
 	"github.com/davidwalter0/llb/listener"
 	"github.com/davidwalter0/llb/pipe"
@@ -16,14 +17,14 @@ import (
 func NewPipeDefinition(Service *v1.Service, envCfg *share.ServerCfg) *pipe.Definition {
 	defer trace.Tracer.ScopedTrace()()
 	return &pipe.Definition{
-		Key:       ServiceKey(Service),
-		Source:    ServiceSource(Service),
+		Key:       helper.ServiceKey(Service),
+		Source:    helper.ServiceSource(Service),
 		EnableEp:  true,
 		InCluster: false,
 		Name:      Service.ObjectMeta.Name,
 		Namespace: Service.ObjectMeta.Namespace,
 		Debug:     envCfg.Debug,
-		Endpoints: ServiceSinks(Service),
+		Endpoints: helper.ServiceSinks(Service),
 	}
 }
 
@@ -32,7 +33,7 @@ func NewManagedListenerFromV1Service(Service *v1.Service,
 	envCfg *share.ServerCfg,
 	Clientset *kubernetes.Clientset) (ml *listener.ManagedListener) {
 	defer trace.Tracer.ScopedTrace()()
-	var ip = ServiceSourceIP(Service)
+	var ip = helper.ServiceSourceIP(Service)
 	var c *ipmgr.CIDR = &ipmgr.CIDR{IP: ip, Bits: ipmgr.Bits, LinkDevice: ipmgr.LinkDevice}
 
 	ml = &listener.ManagedListener{

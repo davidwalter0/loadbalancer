@@ -3,7 +3,7 @@ package listener
 import (
 	"log"
 	"net"
-	"sync"
+	// "sync"
 	"sync/atomic"
 	"time"
 
@@ -11,6 +11,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/davidwalter0/go-mutex"
+	"github.com/davidwalter0/llb/helper"
 	"github.com/davidwalter0/llb/ipmgr"
 	"github.com/davidwalter0/llb/kubeconfig"
 	"github.com/davidwalter0/llb/pipe"
@@ -23,12 +24,12 @@ var retries = 3
 // ManagedListener and it's dependent objects
 type ManagedListener struct {
 	pipe.Definition
-	Listener   net.Listener        `json:"-"`
-	Pipes      map[*pipe.Pipe]bool `json:"-"`
-	Mutex      *mutex.Mutex        `json:"-"`
-	Wg         sync.WaitGroup      `json:"-"`
-	Kubernetes bool                `json:"-"`
-	Debug      bool                `json:"-"`
+	Listener net.Listener        `json:"-"`
+	Pipes    map[*pipe.Pipe]bool `json:"-"`
+	Mutex    *mutex.Mutex        `json:"-"`
+	// Wg         sync.WaitGroup      `json:"-"`
+	Kubernetes bool `json:"-"`
+	Debug      bool `json:"-"`
 	n          uint64
 	MapAdd     chan *pipe.Pipe
 	MapRm      chan *pipe.Pipe
@@ -73,9 +74,13 @@ func (ml *ManagedListener) PipeMapHandler() {
 		for {
 			select {
 			case pipe := <-ml.MapAdd:
-				ml.Insert(pipe)
+				if pipe != nil {
+					ml.Insert(pipe)
+				}
 			case pipe := <-ml.MapRm:
-				ml.Delete(pipe)
+				if pipe != nil {
+					ml.Delete(pipe)
+				}
 			}
 		}
 	}
@@ -109,12 +114,9 @@ func (ml *ManagedListener) NextEndPoint() (sink string) {
 		defer ml.Monitor()()
 		var n uint64
 		// Don't use k8s endpoint lookup if not in a k8s cluster
-		if ml.Kubernetes && ml.EnableEp && len(ml.Endpoints) > 0 {
-			n = atomic.AddUint64(&ml.n, 1) % uint64(len(ml.Endpoints))
-			sink = (ml.Endpoints)[n]
-		} else {
-			sink = ml.Sink
-		}
+		sinks := helper.ServiceSinks(ml.V1Service)
+		n = atomic.AddUint64(&ml.n, 1) % uint64(len(sinks))
+		sink = sinks[n]
 	}
 	return
 }
@@ -134,7 +136,7 @@ func (ml *ManagedListener) StopWatchNotify() {
 
 // EpWatcher check for endpoints
 func (ml *ManagedListener) EpWatcher() {
-	if ml != nil {
+	if ml != nil && ml.InCluster {
 		ticker := time.NewTicker(share.TickDelay)
 		defer ticker.Stop()
 		for {
@@ -164,6 +166,7 @@ func (ml *ManagedListener) Listening() {
 			break
 		}
 		sink := ml.NextEndPoint()
+		log.Println(sink)
 		SinkConn, err = net.Dial("tcp", sink)
 		if err != nil {
 			log.Printf("Connection failed: %v\n", err)

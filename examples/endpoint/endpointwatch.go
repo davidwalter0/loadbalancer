@@ -48,7 +48,7 @@ func main() {
 	}
 
 	endpointWatcher := watch.NewQueueMgr(watch.EndpointAPIName, clientset)
-	go endpointWatcher.Run(2, 2)
+	go endpointWatcher.Run(1, 1)
 
 	time.Sleep(10 * time.Second)
 	for i := 0; i < 100; i++ {

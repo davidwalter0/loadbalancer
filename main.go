@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -30,14 +31,14 @@ var Commit string
 // Version semver string
 var Version string
 
-func main() {
+func init() {
 	array := strings.Split(os.Args[0], "/")
 	me := array[len(array)-1]
-	fmt.Printf("%s: Version %s version build %s commit %s\n", me, Version, Build, Commit)
+	fmt.Printf("%s %s: Version %s version build %s commit %s\n", log.Prefix(), me, Version, Build, Commit)
+}
 
-	fmt.Println(*envCfg)
+func main() {
 	// creates the clientset
-
 	clientset := kubeconfig.NewClientset(envCfg.Kubeconfig)
 	if clientset == nil {
 		glog.Fatal("Kubernetes connection failed")
