@@ -57,8 +57,8 @@ func (mgr *Mgr) Shutdown() {
 	close(shutdown)
 	for key, ml := range mgr.Listeners {
 		log.Println("Shutting down listener for", key)
+		mgr.Close(key)
 		ml.RemoveExternalIP()
-		ml.Close()
 	}
 }
 
@@ -72,7 +72,8 @@ func (mgr *Mgr) Monitor() func() {
 func (mgr *Mgr) Run() {
 	log.Println("LinkDefaultCIDR", ipmgr.DefaultCIDR)
 
-	listOpts := &metav1.ListOptions{LabelSelector: "node-role.kubernetes.io/worker"}
+	listOpts := &metav1.ListOptions{LabelSelector: "node-role.kubernetes.io/worker", IncludeUninitialized: false}
+
 	mgr.NodeWatcher = watch.NewQueueMgrListOpt(watch.NodeAPIName, mgr.Clientset, listOpts)
 	mgr.ServiceWatcher = watch.NewQueueMgr(watch.ServiceAPIName, mgr.Clientset)
 
@@ -84,8 +85,8 @@ func (mgr *Mgr) Run() {
 	}
 }
 
-// RemovePipe adds/updates or removes a pipe definition
-func (mgr *Mgr) RemovePipe(Key string) {
+// Close removes a pipe definition
+func (mgr *Mgr) Close(Key string) {
 	defer trace.Tracer.ScopedTrace()()
 	defer mgr.Mutex.MonitorTrace("Remove")()
 
@@ -96,9 +97,9 @@ func (mgr *Mgr) RemovePipe(Key string) {
 	}
 }
 
-// UpdatePipe adds/update a pipe definition, creates Managed
+// Open adds/update a pipe definition, creates Managed
 // Listeners, IPs for load balancers with specified external ports
-func (mgr *Mgr) UpdatePipe(Service *v1.Service) {
+func (mgr *Mgr) Open(Service *v1.Service) {
 	defer mgr.Mutex.MonitorTrace("Update")()
 	defer trace.Tracer.ScopedTrace()()
 	var Key = helper.ServiceKey(Service)
@@ -152,16 +153,18 @@ func (mgr *Mgr) NodeWatch() {
 		case item, ok := <-mgr.NodeWatcher.QueueItems:
 			if ok {
 				Node := item.Interface.(*v1.Node)
-				if mgr.EnvCfg.Debug {
-					log.Printf("Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
-				}
+				// if mgr.EnvCfg.Debug {
+				// 	log.Printf("Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
+				// }
 				switch item.EventType {
 				case watch.ADD:
+					log.Printf("Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
 					nodeList.AddNode(Node.Spec.ExternalID)
-				case watch.UPDATE:
-					// Expect that nodes can't change their ip address w/o
-					// destroy / create, ignore UPDATE for now
+				// case watch.UPDATE:
+				// 	// Expect that nodes can't change their ip address w/o
+				// 	// destroy / create, ignore UPDATE for now
 				case watch.DELETE:
+					log.Printf("Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
 					nodeList.RemoveNode(Node.Spec.ExternalID)
 				}
 			} else {
@@ -191,13 +194,13 @@ func (mgr *Mgr) ServiceWatch() {
 					}
 					switch Service.Spec.Type {
 					case "LoadBalancer":
-						mgr.UpdatePipe(Service)
+						mgr.Open(Service)
 					default:
-						mgr.RemovePipe(item.Key)
+						mgr.Close(item.Key)
 					}
 				case watch.DELETE:
 					log.Printf("Event %s for type %s\n", item.Key, item.EventType)
-					mgr.RemovePipe(item.Key)
+					mgr.Close(item.Key)
 				}
 			} else {
 				log.Fatal("error in Services Channel")

@@ -30,17 +30,20 @@ var Commit string
 // Version semver string
 var Version string
 
+// process arg[0]
+var me string
+
 func init() {
 	array := strings.Split(os.Args[0], "/")
-	me := array[len(array)-1]
+	me = array[len(array)-1]
 	log.SetOutput(os.Stderr)
-	log.Printf("%s: Version %s version build %s commit %s\n", me, Version, Build, Commit)
+	log.Printf("%s: %s version build %s commit %s\n", me, Version, Build, Commit)
 	log.SetOutput(os.Stdout)
 }
 
 func main() {
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, os.Kill)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
 	// creates the clientset
 	clientset := kubeconfig.NewClientset(envCfg.Kubeconfig)
@@ -50,7 +53,9 @@ func main() {
 	var mgr *mgmt.Mgr = mgmt.NewMgr(envCfg, clientset)
 	go mgr.Run()
 	select {
-	case <-signals:
+	case signal := <-signals:
+		log.Printf("%s: %s version build %s commit %s\n", me, Version, Build, Commit)
+		log.Printf("%s: handling signal %s\n", me, signal)
 		mgr.Shutdown()
 	}
 }
