@@ -192,7 +192,7 @@ func (ml *ManagedListener) Close() {
 			defer ml.Monitor()()
 			var pipes = []*pipe.Pipe{}
 			for pipe := range ml.Pipes {
-				pipe.Close()
+				go pipe.Close()
 				pipes = append(pipes, pipe)
 			}
 			for _, pipe := range pipes {

@@ -57,8 +57,8 @@ func (mgr *Mgr) Shutdown() {
 	close(shutdown)
 	for key, ml := range mgr.Listeners {
 		log.Println("Shutting down listener for", key)
-		ml.RemoveExternalIP()
 		mgr.Close(key)
+		ml.RemoveExternalIP()
 	}
 }
 

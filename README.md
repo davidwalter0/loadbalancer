@@ -1,19 +1,4 @@
-- validate device reference counting when the device is already
-  present but only one service uses the device and it's not the
-  primary link device address
-- add event filter to ignore node updates not for up or down events
-- update service with external address field set to load balancer ip when running
-  - Update(*v1.Service) (*v1.Service, error)
-
-``` 
-
-// Update takes the representation of a service and updates it
-// Returns the server's representation of the service, and an error, 
-// if there is any.
-func (c *services) Update(service *v1.Service) (result *v1.Service, err error) {
-```
-
-*Use at your own risk Alpha software / pre-release*
+# *Use at your own risk Alpha software / pre-release*
 
 ---
 Little load balancer
