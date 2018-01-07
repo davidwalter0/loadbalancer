@@ -193,16 +193,10 @@ More things not yet completed
   - marry nodes to nodeports as service endpoints for out of cluster
 - [x] Create endpoint watcher similar to service watch
   - out of cluster use node watcher
-- [ ] Check ability to run in cluster with host network privilege
-  and a bridge interface specified as --linkdevice
-  - label the node `node-role.kubernetes.io/load-balancer`
-  - run a statefulset of one instance
-  - use the bridge interface device to apply the changes
 - [x] All namespaces through one load balancer
 - [x] Update service ExternalIPs with the ip address of the load balancer
 - [x] Add signal handler to cleanup ExternalIPs on shutown sigint,
   sigterm
-- [ ] allow multiple ports per service to be forwarded
 
 --- 
 
@@ -210,3 +204,9 @@ More things not yet completed
 
 - [ ] research netlink network route/device watcher for both insertion
   of physical hardware or default address change
+- [ ] allow multiple ports per service to be forwarded
+- [ ] Check ability to run in cluster with host network privilege
+  and a bridge interface specified as --linkdevice
+  - label the node `node-role.kubernetes.io/load-balancer`
+  - run a statefulset of one instance
+  - use the bridge interface device to apply the changes
