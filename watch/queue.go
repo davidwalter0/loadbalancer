@@ -1,9 +1,12 @@
 /*
 
-based on k8s.io/client-go/examples/workqueue
+Based on k8s.io/client-go/examples/workqueue
 
 refactored to enable creating multiple watchers via NewQueueMgr or
 NewQueueMgrListOpt
+
+Note: threadiness has not been tested. Currently only testing with a
+setting of 1 has been done
 
 */
 
