@@ -43,6 +43,7 @@ func (nl *NodeList) RemoveNode(node string) {
 
 // updateList changes the list
 func (nl *NodeList) updateList() {
+	nl.List = []string{}
 	for node := range nl.Nodes {
 		nl.List = append(nl.List, node)
 	}
