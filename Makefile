@@ -23,7 +23,7 @@ all: $(target)
 etags:
 	etags $(depends) $(build_deps)
 
-.dep: $(target) $(depends) Makefile
+.dep: $(target) $(depends) Makefile .version
 	touch .dep
 
 build: $(target)
