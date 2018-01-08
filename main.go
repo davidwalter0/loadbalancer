@@ -51,17 +51,25 @@ var Version string
 // process arg[0]
 var me string
 
+var signals = make(chan os.Signal, 1)
+
+// Message of repo info
+var Message = `
+Copyright 2018 David Walter.
+
+go get github.com/davidwalter0/llb
+`
+
 func init() {
 	array := strings.Split(os.Args[0], "/")
 	me = array[len(array)-1]
 	log.SetOutput(os.Stderr)
-	log.Printf("%s: %s version build %s commit %s\n", me, Version, Build, Commit)
+	log.Printf("%s: %s version build %s commit %s\n\n%s\n", me, Version, Build, Commit, Message)
 	log.SetOutput(os.Stdout)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGKILL, syscall.SIGQUIT, syscall.SIGSTOP)
 }
 
 func main() {
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
 	// creates the clientset
 	clientset := kubeconfig.NewClientset(envCfg.Kubeconfig)

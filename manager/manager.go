@@ -43,7 +43,7 @@ var managedLBIPs ipmgr.LoadBalancerIPs = make(ipmgr.LoadBalancerIPs)
 var shutdown = make(chan struct{})
 
 // retries number of attempts
-var retries = 5
+var retries = 1
 
 // logStatusTimeout in seconds
 var logStatusTimeout = time.Duration(600)
@@ -123,8 +123,15 @@ func (mgr *Mgr) Open(Service *v1.Service) {
 	var Key = helper.ServiceKey(Service)
 	if current, ok := mgr.Listeners[Key]; !ok {
 		managedListener := NewManagedListenerFromV1Service(Service, mgr.EnvCfg, mgr.Clientset)
+		managedLBIPs.RemoveAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
 		managedLBIPs.AddAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
 		managedListener.Listener = Listen(helper.ServiceSource(Service))
+		if managedListener.Listener == nil {
+			log.Printf("Listen failed for %s service on %v tearing down\n", Key, managedListener.CIDR.String())
+			managedLBIPs.RemoveAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
+			delete(mgr.Listeners, Key)
+			return
+		}
 		mgr.Listeners[Key] = managedListener
 		mgr.Listeners[Key].Open()
 	} else {
@@ -132,9 +139,16 @@ func (mgr *Mgr) Open(Service *v1.Service) {
 		if !managedListener.Equal(current) {
 			mgr.Listeners[Key].Close()
 			managedLBIPs.RemoveAddr(current.CIDR.String(), current.CIDR.LinkDevice)
-			mgr.Listeners[Key] = managedListener
+			managedLBIPs.RemoveAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
 			managedLBIPs.AddAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
 			managedListener.Listener = Listen(helper.ServiceSource(Service))
+			if managedListener.Listener == nil {
+				log.Printf("Listen failed for %s service on %v tearing down\n", Key, managedListener.CIDR.String())
+				managedLBIPs.RemoveAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
+				delete(mgr.Listeners, Key)
+				return
+			}
+			mgr.Listeners[Key] = managedListener
 			mgr.Listeners[Key].Open()
 		}
 	}
@@ -148,15 +162,10 @@ func Listen(address string) (listener net.Listener) {
 		defer trace.Tracer.ScopedTrace(fmt.Sprintf("listener:%v err: %v", listener, err))()
 	}
 
-	for i := 0; i < retries; i++ {
-		if listener, err = net.Listen("tcp", address); err != nil {
-			log.Printf("net.Listen(\"tcp\", %s ) failed: %v\n", address, err)
-		} else {
-			return listener
-		}
-		time.Sleep(time.Second * time.Duration(i))
+	if listener, err = net.Listen("tcp", address); err != nil {
+		log.Printf("net.Listen(\"tcp\", %s ) failed: %v\n", address, err)
 	}
-	panic("listen failed: " + address)
+	return
 }
 
 // NodeWatch manage node workers list dynamically

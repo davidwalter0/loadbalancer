@@ -1,7 +1,3 @@
-### *Use at your own risk Alpha software / pre-release*
-
-
----
 Little load balancer
 
 - Connect to kubernetes cluster
@@ -23,13 +19,20 @@ Little load balancer
     --node-labels=node-role.kubernetes.io/worker
   - use the ExternalID from the node spec as the IP endpoint
 
-
 Manage routes / addresses for external ip addresses
 
 - Add or remove ip addresses from the load balancer service definition
   - add if not present
   - maintain a map of addresses
   - remove when the last load balancer using the address is removed
+
+- Disallow reuse of service specified loadbalancerIPs
+  - when adding an ip address, it will be used only by one load
+    balancers service
+  - Each service must choose a unique address
+  - if using the default address multiple services may share the
+    default linkdevice address but port collision management is up to
+    the author of the service specification
 
 ---
 ## Example use
@@ -165,20 +168,20 @@ kubectl apply -f examples/dashboard.yaml
 ---
 *BUGS*
 
-For testing the ip addresses of 2 VMs are hard coded. The next
-iteration will test and extract the nodes from the cluster based on
-node labels
+- Unique IP assignment fails
+  - if 2 services attempt to use the same address log the second as an
+    error and ignore it.
+  - current this causes a panic
+  - disallow empty/missing loadBalancerIP or reuse of default bridge
+    ip address
 
 ---
 
 *TODO*
 
-- IP address endpoint assignment by collecting node names from
-  kubernetes cluster
-- Test InCluster endpoint activity  
-### TODO
+### Features / behaviour
 
-More things not yet completed
+Moved to complete and testing
 
 - [x] Load active devices (use --linkdevice to specify the active
   device)
@@ -199,6 +202,11 @@ More things not yet completed
 - [x] Add signal handler to cleanup ExternalIPs on shutown sigint,
   sigterm
 - [x] Run in a managed Kubernetes managed deployment pod inside cluster
+- [x] IP address endpoint assignment by collecting node names from
+  kubernetes cluster
+  - [x] Complete
+- [x] Test InCluster endpoint activity
+  - [ ] In progress
 
 
 --- 
@@ -214,13 +222,16 @@ More things not yet completed
 
 llb/examples/yaml:
 
-*Run these examples at your own risk*
-
 Ensure that the loadBalancerIP addresses that you use are in the
 subnet of the device specified for your subnet and not reserved, or if
 using a home router, outside the range the router will offer to
 devices on the network
 
+Many of the simple examples are based on the echo service
+
+```
+kubectl apply -f examples/manifests/echodaemonset.yaml
+```
 
 -  kubernetes-dashboard-lb.yaml
 -  kubernetes-dashboard.yaml
