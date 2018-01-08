@@ -19,7 +19,7 @@ limitations under the License.
 package listener
 
 import (
-	"github.com/davidwalter0/llb/tracer"
+	"github.com/davidwalter0/loadbalancer/tracer"
 )
 
 // Equal compares two ManagedListener objects

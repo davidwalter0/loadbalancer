@@ -25,8 +25,8 @@ import (
 
 	"k8s.io/api/core/v1"
 
-	"github.com/davidwalter0/llb/ipmgr"
-	"github.com/davidwalter0/llb/nodemgr"
+	"github.com/davidwalter0/loadbalancer/ipmgr"
+	"github.com/davidwalter0/loadbalancer/nodemgr"
 )
 
 // ServiceKey from v1.Service info for map lookup in listeners

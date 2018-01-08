@@ -22,7 +22,7 @@ import (
 	// "fmt"
 	"testing"
 
-	"github.com/davidwalter0/llb/pipe"
+	"github.com/davidwalter0/loadbalancer/pipe"
 )
 
 type TestPipe map[string][]pipe.Definition

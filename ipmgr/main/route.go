@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/davidwalter0/llb/ipmgr"
+	"github.com/davidwalter0/loadbalancer/ipmgr"
 
 	"github.com/vishvananda/netlink"
 )

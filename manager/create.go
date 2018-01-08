@@ -23,12 +23,12 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/davidwalter0/go-mutex"
-	"github.com/davidwalter0/llb/helper"
-	"github.com/davidwalter0/llb/ipmgr"
-	"github.com/davidwalter0/llb/listener"
-	"github.com/davidwalter0/llb/pipe"
-	"github.com/davidwalter0/llb/share"
-	"github.com/davidwalter0/llb/tracer"
+	"github.com/davidwalter0/loadbalancer/helper"
+	"github.com/davidwalter0/loadbalancer/ipmgr"
+	"github.com/davidwalter0/loadbalancer/listener"
+	"github.com/davidwalter0/loadbalancer/pipe"
+	"github.com/davidwalter0/loadbalancer/share"
+	"github.com/davidwalter0/loadbalancer/tracer"
 )
 
 // NewPipeDefinition from a kubernetes v1.Service

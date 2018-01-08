@@ -32,12 +32,12 @@ import (
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 
 	"github.com/davidwalter0/go-mutex"
-	"github.com/davidwalter0/llb/helper"
-	"github.com/davidwalter0/llb/ipmgr"
-	"github.com/davidwalter0/llb/kubeconfig"
-	"github.com/davidwalter0/llb/pipe"
-	"github.com/davidwalter0/llb/share"
-	"github.com/davidwalter0/llb/tracer"
+	"github.com/davidwalter0/loadbalancer/helper"
+	"github.com/davidwalter0/loadbalancer/ipmgr"
+	"github.com/davidwalter0/loadbalancer/kubeconfig"
+	"github.com/davidwalter0/loadbalancer/pipe"
+	"github.com/davidwalter0/loadbalancer/share"
+	"github.com/davidwalter0/loadbalancer/tracer"
 )
 
 var retries = 3

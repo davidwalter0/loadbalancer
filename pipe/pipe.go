@@ -25,9 +25,9 @@ import (
 	"time"
 
 	"github.com/davidwalter0/go-mutex"
-	"github.com/davidwalter0/llb/ipmgr"
-	"github.com/davidwalter0/llb/share"
-	"github.com/davidwalter0/llb/tracer"
+	"github.com/davidwalter0/loadbalancer/ipmgr"
+	"github.com/davidwalter0/loadbalancer/share"
+	"github.com/davidwalter0/loadbalancer/tracer"
 )
 
 // NewPipe creates a Pipe and returns a pointer to the same

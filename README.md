@@ -38,11 +38,11 @@ Manage routes / addresses for external ip addresses
 ## Example use
 
 
-Run llb with superuser permissions so that llb can modify routes and
+Run loadbalancer with superuser permissions so that loadbalancer can modify routes and
 use privileged ports.
 
 ```
-sudo bin/llb --kubeconfig cluster/auth/kubeconfig --linkdevice eth0
+sudo bin/loadbalancer --kubeconfig cluster/auth/kubeconfig --linkdevice eth0
 ```
 
 Run an echo service on port 8888
@@ -72,7 +72,7 @@ spec:
 ```
 
 Then update  it with  a definition similar  to the  following `kubectl
-apply  -f  service.yaml` to  update  that  service, with  LLB  running
+apply  -f  service.yaml` to  update  that  service, with  LOADBALANCER  running
 outside  the  cluster the  accessible  port  will  be a  *Port*.  That
 NodePort will be the upstream *sink* add a new external port using the
 kubernetes inserted NodePort value as the destination
@@ -220,7 +220,7 @@ Moved to complete and testing
 
 ---
 
-llb/examples/yaml:
+loadbalancer/examples/yaml:
 
 Ensure that the loadBalancerIP addresses that you use are in the
 subnet of the device specified for your subnet and not reserved, or if
@@ -253,9 +253,9 @@ VM.
     address specified in the service's loadBalancerIP field as the
     service's externalIP
   - Example files: enable cluster role and configure deployment
-    - kubectl -f examples/yaml/llbdeployment.yaml -f examples/yaml/llbclusterrole.yaml
-    - llbdeployment.yaml
-    - llbclusterrole.yaml 
+    - kubectl -f examples/yaml/loadbalancerdeployment.yaml -f examples/yaml/loadbalancerclusterrole.yaml
+    - loadbalancerdeployment.yaml
+    - loadbalancerclusterrole.yaml 
   - Run inside a manually configured bridge in virtualbox or a
     bridged interface with vagrant
     - `https://www.vagrantup.com/docs/networking/public_network.html`
@@ -271,7 +271,7 @@ VM.
       replicas: 1
     - use the bridge interface device to apply the changes
     - configure permissions if the cluster has enabled
-    - llb configures ips on the bridged interface supplied on the
+    - loadbalancer configures ips on the bridged interface supplied on the
       commandline
 
 

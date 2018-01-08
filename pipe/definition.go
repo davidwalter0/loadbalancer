@@ -21,7 +21,7 @@ package pipe
 import (
 	"sort"
 
-	"github.com/davidwalter0/llb/tracer"
+	"github.com/davidwalter0/loadbalancer/tracer"
 )
 
 // EP slice of endpoints

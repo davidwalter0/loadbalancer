@@ -19,8 +19,8 @@ limitations under the License.
 package mgr
 
 import (
-	"github.com/davidwalter0/llb/global"
-	"github.com/davidwalter0/llb/ipmgr"
+	"github.com/davidwalter0/loadbalancer/global"
+	"github.com/davidwalter0/loadbalancer/ipmgr"
 )
 
 func init() {

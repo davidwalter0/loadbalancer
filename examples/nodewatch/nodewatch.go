@@ -28,8 +28,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/davidwalter0/go-cfg"
-	"github.com/davidwalter0/llb/kubeconfig"
-	"github.com/davidwalter0/llb/watch"
+	"github.com/davidwalter0/loadbalancer/kubeconfig"
+	"github.com/davidwalter0/loadbalancer/watch"
 )
 
 // ServerCfg runtime options config struct

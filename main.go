@@ -26,9 +26,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/davidwalter0/llb/global"
-	"github.com/davidwalter0/llb/kubeconfig"
-	mgmt "github.com/davidwalter0/llb/manager"
+	"github.com/davidwalter0/loadbalancer/global"
+	"github.com/davidwalter0/loadbalancer/kubeconfig"
+	mgmt "github.com/davidwalter0/loadbalancer/manager"
 )
 
 var envCfg = global.Cfg()

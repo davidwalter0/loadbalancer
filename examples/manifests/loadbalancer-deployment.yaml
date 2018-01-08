@@ -30,13 +30,14 @@ spec:
                 operator: Exists
       containers:
       - name: loadbalancer
-        image: davidwalter/llb:latest
-        # imagePullPolicy: IfNotPresent
-        imagePullPolicy: Always
+        # image: davidwalter/loadbalancer:latest
+        # imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
+        image: davidwalter/loadbalancer:0.3.0
         securityContext:
           privileged: true
         args:
-        - "/opt/sbin/llb"
+        - "/opt/sbin/loadbalancer"
         - "--linkdevice=eth2"
         - "--debug"
       terminationGracePeriodSeconds: 30

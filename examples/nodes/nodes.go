@@ -28,7 +28,7 @@ import (
 	// _ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 
 	"github.com/davidwalter0/go-cfg"
-	"github.com/davidwalter0/llb/kubeconfig"
+	"github.com/davidwalter0/loadbalancer/kubeconfig"
 )
 
 // ServerCfg runtime options config struct

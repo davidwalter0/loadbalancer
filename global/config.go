@@ -19,7 +19,7 @@ limitations under the License.
 package global
 
 import (
-	"github.com/davidwalter0/llb/share"
+	"github.com/davidwalter0/loadbalancer/share"
 )
 
 var envCfg = &share.ServerCfg{}

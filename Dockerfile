@@ -1,3 +1,3 @@
 FROM davidwalter/debian-stretch-slim
-COPY bin/llb /opt/sbin/llb
-CMD [ "/opt/sbin/llb" ]
+COPY bin/loadbalancer /opt/sbin/loadbalancer
+CMD [ "/opt/sbin/loadbalancer" ]
