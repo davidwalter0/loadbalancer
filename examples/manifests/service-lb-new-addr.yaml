@@ -14,5 +14,3 @@ spec:
     name: echo
   loadBalancerIP: 192.168.0.226
   type: LoadBalancer
-  # externalIPs:
-  # - 192.168.0.26

@@ -1,4 +1,5 @@
-# *Use at your own risk Alpha software / pre-release*
+### *Use at your own risk Alpha software / pre-release*
+
 
 ---
 Little load balancer
@@ -197,6 +198,8 @@ More things not yet completed
 - [x] Update service ExternalIPs with the ip address of the load balancer
 - [x] Add signal handler to cleanup ExternalIPs on shutown sigint,
   sigterm
+- [x] Run in a managed Kubernetes managed deployment pod inside cluster
+
 
 --- 
 
@@ -205,8 +208,112 @@ More things not yet completed
 - [ ] research netlink network route/device watcher for both insertion
   of physical hardware or default address change
 - [ ] allow multiple ports per service to be forwarded
-- [ ] Check ability to run in cluster with host network privilege
-  and a bridge interface specified as --linkdevice
-  - label the node `node-role.kubernetes.io/load-balancer`
-  - run a statefulset of one instance
-  - use the bridge interface device to apply the changes
+
+
+---
+
+llb/examples/yaml:
+
+*Run these examples at your own risk*
+
+Ensure that the loadBalancerIP addresses that you use are in the
+subnet of the device specified for your subnet and not reserved, or if
+using a home router, outside the range the router will offer to
+devices on the network
+
+
+-  kubernetes-dashboard-lb.yaml
+-  kubernetes-dashboard.yaml
+-  service-lb-new-addr.yaml
+   - load balancer with a specified address loadBalancerIP= 
+   - 
+-  service-lb.yaml
+   - load balancer without a specified address
+-  service.yaml
+
+If you run these in a locally configured VM with a bridged interface
+the dynamically allocated ip addresses are visible to the external
+network while isolating network changes from the host machine in the
+VM.
+
+- Running in a managed Kubernetes deployment pod inside the cluster
+  - Manage ip addresses on linkdevice
+  - Add address to and remove address from the linkdevice and use the
+    address specified in the service's loadBalancerIP field as the
+    service's externalIP
+  - Example files: enable cluster role and configure deployment
+    - kubectl -f examples/yaml/llbdeployment.yaml -f examples/yaml/llbclusterrole.yaml
+    - llbdeployment.yaml
+    - llbclusterrole.yaml 
+  - Run inside a manually configured bridge in virtualbox or a
+    bridged interface with vagrant
+    - `https://www.vagrantup.com/docs/networking/public_network.html`
+    - in Vagrant you can select the interface to use as the bridge and
+      add the bridge when provisioning the VM
+      - config.vm.network :public_network, :public_network => "wlan0"
+      - config.vm.network :public_network, :public_network => "eth0"
+      - answer the prompt with the bridge interface number
+  - Run in cluster with host network privilege inside a kubernetes
+    managed pod and a bridge interface specified as --linkdevice
+    - label the node `node-role.kubernetes.io/load-balancer="primary"`
+    - run a deployment or a replication set with a replica count of one
+      replicas: 1
+    - use the bridge interface device to apply the changes
+    - configure permissions if the cluster has enabled
+    - llb configures ips on the bridged interface supplied on the
+      commandline
+
+
+---
+Configuring manifests and nodes for scheduling affinity / anti affinity
+
+(bootkube ... multi-mode filesystem configuration reference)
+
+Modify calico.yaml and kube-proxy.yaml in cluster/manifests
+
+```
+      tolerations:
+        # Allow the pod to run on master nodes
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+        # Allow the pod to run on loadbalancer nodes
+        - key: node-role.kubernetes.io/loadbalancer
+          effect: NoSchedule
+```
+
+Force scheduling load balancer only on
+node-role.kubernetes.io/loadbalancer labeled node and allow scheduling
+with toleration
+
+```
+      tolerations:
+        - key: node-role.kubernetes.io/loadbalancer
+          operator: Exists
+          effect: NoSchedule
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/loadbalancer
+                operator: Exists
+
+```
+
+
+Taint the load balancer node to repel (give scheduling anti affinity to all but those pods with manifests)
+
+Label the node for scheduling affinity, taint for general anti affinity
+
+
+
+```
+    .
+    .
+    .
+          --node-labels=node-role.kubernetes.io/loadbalancer=primary \
+          --register-with-taints=node-role.kubernetes.io/loadbalancer=:NoSchedule \
+    .
+    .
+
+```
