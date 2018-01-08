@@ -73,7 +73,7 @@ type ClientCfg struct {
 // ServerCfg options to configure endPtDefn
 type ServerCfg struct {
 	ForwarderCfg
-	TLSCfg
+	// TLSCfg
 }
 
 type TLSCfg struct {
@@ -88,7 +88,7 @@ type TLSCfg struct {
 // Read from env variables or command line flags
 func (envCfg *ServerCfg) Read() {
 	envCfg.ForwarderCfg.Read()
-	envCfg.TLSCfg.Read()
+	// envCfg.TLSCfg.Read()
 	cfg.Finalize()
 	if len(envCfg.LinkDevice) == 0 {
 		fmt.Fprintln(os.Stderr, log.Prefix(), "Error: ether iface link device not set")
