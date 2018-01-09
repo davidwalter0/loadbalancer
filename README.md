@@ -1,5 +1,21 @@
 Little load balancer
 
+---
+### Load Balancing
+
+Ip addresses are added to the host and traffic is routed from external
+client application to internal services. External IPs are updated and
+added to Kubernetes Services by the loadbalancer and the local host's
+linkdevice owns the CIDR block of routable addresses on the linkdevice
+subnet
+
+![alt text](https://github.com/davidwalter0/loadbalancer/blob/master/images/load-balancer-sequence-diagram.png "LoadBalancer Sequence")
+
+*Data Flow*
+
+![alt text](https://github.com/davidwalter0/loadbalancer/blob/master/images/kubernetes-loadbalancer.png "Application <-> Load Balancer <-> Kubernetes Service <-> Kubernetes Server Application")
+
+
 - Connect to kubernetes cluster
 - Watch services
   - when the Type=LoadBalancer 
@@ -33,19 +49,6 @@ Manage routes / addresses for external ip addresses
   - if using the default address multiple services may share the
     default linkdevice address but port collision management is up to
     the author of the service specification
-
----
-### Managed Load Balancing
-
-Ip addresses are added to the host and traffic is routed from external
-client application to internal services. External IPs are updated and
-added to Kubernetes Services by the loadbalancer and the local host's
-linkdevice owns the CIDR block of routable addresses on the linkdevice
-subnet
-
-![alt text](https://github.com/davidwalter0/loadbalancer/blob/master/images/load-balancer-sequence-diagram.png "LoadBalancer Sequence")
-
-![alt text](https://github.com/davidwalter0/loadbalancer/blob/master/images/kubernetes-loadbalancer.png "Application <-> Load Balancer <-> Kubernetes Service <-> Kubernetes Server Application")
 
 ---
 ## Example use
