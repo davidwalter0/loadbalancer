@@ -11,11 +11,13 @@ subnet
 
 ![alt text](https://github.com/davidwalter0/loadbalancer/blob/master/images/load-balancer-sequence-diagram.png "LoadBalancer Sequence")
 
-*Data Flow*
+---
+### Data Flow
+
 
 ![alt text](https://github.com/davidwalter0/loadbalancer/blob/master/images/kubernetes-loadbalancer.png "Application <-> Load Balancer <-> Kubernetes Service <-> Kubernetes Server Application")
 
-
+#### Flow / Sequence Description
 - Connect to kubernetes cluster
 - Watch services
   - when the Type=LoadBalancer 
@@ -170,7 +172,7 @@ printf "$(kubectl get svc --all-namespaces --output=go-template --template='{{ra
 ```
 
 ---
-*Dashboard*
+### Dashboard
 
 Another example enabling a routable dashboard assuming you've already
 created the certificates for the dashboard
@@ -181,19 +183,32 @@ kubectl apply -f examples/manifests/kubernetes-dashboard.yaml
 kubectl apply -f examples/manifests/kubernetes-dashboard-lb.yaml
 ```
 
+The dashboard should be visible on the loadBalancerIP and port specified in the `kubernetes-dashboard-lb.yaml`
+
+From the yaml file that would be loadBalancerIP: 192.168.0.251 and
+port: 443 so the application will be exposed on the port and
+address 192.168.0.251:443
+
+```
+  ports:
+  - port: 443
+    targetPort: 8443
+    name: kubernetes-dashboard
+  loadBalancerIP: 192.168.0.251
+  type: LoadBalancer
+```
+
 ---
 *BUGS*
 
 - Unique IP assignment fails
-  - if 2 services attempt to use the same address log the second as an
-    error and ignore it.
-  - current this causes a panic
-  - disallow empty/missing loadBalancerIP or reuse of default bridge
-    ip address
+  - When 2 services attempt to use the same address log the second
+    will fail with an error then ignore the service.
 
 ---
 
 *TODO*
+
 
 ### Features / behaviour
 
