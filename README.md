@@ -35,6 +35,17 @@ Manage routes / addresses for external ip addresses
     the author of the service specification
 
 ---
+### Managed Load Balancing
+
+Ip addresses are added to the host and traffic is routed from external
+client application to internal services. External IPs are updated and
+added to Kubernetes Services by the loadbalancer and the local host's
+linkdevice owns the CIDR block of routable addresses on the linkdevice
+subnet
+
+![alt text](https://github.com/davidwalter0/loadbalancer/blob/wip/images/kubernetes-loadbalancer.png "Application <-> Load Balancer <-> Kubernetes Service <-> Kubernetes Server Application")
+
+---
 ## Example use
 
 
