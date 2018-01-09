@@ -177,8 +177,8 @@ created the certificates for the dashboard
 
 ```
 kubectl create secret generic kubernetes-dashboard-certs --from-file=cluster/tls --namespace=kube-system
-kubectl apply -f examples/kubernetes-dashboard.yaml
-kubectl apply -f examples/dashboard.yaml
+kubectl apply -f examples/manifests/kubernetes-dashboard.yaml
+kubectl apply -f examples/manifests/kubernetes-dashboard-lb.yaml
 ```
 
 ---
@@ -236,7 +236,7 @@ Moved to complete and testing
 
 ---
 
-loadbalancer/examples/yaml:
+loadbalancer/examples/manifests:
 
 Ensure that the loadBalancerIP addresses that you use are in the
 subnet of the device specified for your subnet and not reserved, or if
@@ -269,7 +269,7 @@ VM.
     address specified in the service's loadBalancerIP field as the
     service's externalIP
   - Example files: enable cluster role and configure deployment
-    - kubectl -f examples/yaml/loadbalancerdeployment.yaml -f examples/yaml/loadbalancerclusterrole.yaml
+    - kubectl -f examples/manifests/loadbalancerdeployment.yaml -f examples/manifests/loadbalancerclusterrole.yaml
     - loadbalancerdeployment.yaml
     - loadbalancerclusterrole.yaml 
   - Run inside a manually configured bridge in virtualbox or a
