@@ -43,7 +43,9 @@ added to Kubernetes Services by the loadbalancer and the local host's
 linkdevice owns the CIDR block of routable addresses on the linkdevice
 subnet
 
-![alt text](https://github.com/davidwalter0/loadbalancer/blob/wip/images/kubernetes-loadbalancer.png "Application <-> Load Balancer <-> Kubernetes Service <-> Kubernetes Server Application")
+![alt text](https://github.com/davidwalter0/loadbalancer/blob/master/images/load-balancer-sequence-diagram.png "LoadBalancer Sequence")
+
+![alt text](https://github.com/davidwalter0/loadbalancer/blob/master/images/kubernetes-loadbalancer.png "Application <-> Load Balancer <-> Kubernetes Service <-> Kubernetes Server Application")
 
 ---
 ## Example use
