@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/davidwalter0/go-cfg"
 	"github.com/davidwalter0/loadbalancer/kubeconfig"
@@ -35,7 +37,7 @@ import (
 type ServerCfg struct {
 	Debug      bool   `json:"debug"       doc:"increase verbosity"                               default:"false"`
 	Kubeconfig string `json:"kubeconfig"  doc:"kubernetes auth secrets / configuration file"     default:"cluster/auth/kubeconfig"`
-	Kubernetes bool   `json:"kubernetes"  doc:"use kubernetes dynamic endpoints from service/ns" default:"true"`
+	Kubernetes bool   `json:"kubernetes"  doc:"use kubernetes dynamic endpoint from service/ns" default:"true"`
 }
 
 // Read from env variables or command line flags
@@ -74,14 +76,49 @@ func main() {
 		case item := <-serviceWatcher.QueueItems:
 			service := item.Interface.(*v1.Service)
 			fmt.Println(service.Name)
-			for key, value := range service.ObjectMeta.Labels {
-				fmt.Printf("  %-32s %s\n", key, value)
+
+			if service != nil && service.Spec.Type == v1.ServiceTypeLoadBalancer {
+				// for key, value := range service.ObjectMeta.Labels {
+				// 	fmt.Printf("  %-32s %s\n", key, value)
+				// }
+
+				var err error
+				if jsonText, err := json.MarshalIndent(service.Spec, "", "  "); err == nil {
+					fmt.Printf("-------------------------\nservice\n-------------------------\n%s\n", string(jsonText))
+				} else {
+					fmt.Println(err)
+				}
+
+				var endpoint *v1.Endpoints
+				namespace := service.ObjectMeta.Namespace
+				name := service.ObjectMeta.Name
+				endpoint, err = clientset.CoreV1().Endpoints(namespace).Get(name, metav1.GetOptions{})
+				if errors.IsNotFound(err) {
+					fmt.Printf("Endpoints %s in namespace %s not found\n", name, namespace)
+				} else if statusError, isStatus := err.(*errors.StatusError); isStatus {
+					fmt.Printf("Error getting endpoint %s in namespace %s: %v\n", name, namespace, statusError.ErrStatus.Message)
+				} else if err != nil {
+					panic(err.Error())
+				} else {
+					fmt.Printf("Found endpoint %s in namespace %s\n", name, namespace)
+					if endpoint != nil {
+						for _, subset := range endpoint.Subsets {
+							if jsonText, err := json.MarshalIndent(subset.Addresses, "", "  "); err == nil {
+								fmt.Println(string(jsonText))
+							} else {
+								fmt.Println(err)
+							}
+
+							if jsonText, err := json.MarshalIndent(subset.Ports, "", "  "); err == nil {
+								fmt.Println(string(jsonText))
+							} else {
+								fmt.Println(err)
+							}
+						}
+					}
+				}
 			}
-			if jsonText, err := json.MarshalIndent(service, "", "  "); err == nil {
-				fmt.Println(string(jsonText))
-			} else {
-				fmt.Println(err)
-			}
+
 		default:
 			// non blocking channel, choose default and break
 			break

@@ -16,51 +16,26 @@ limitations under the License.
 
 */
 
-package listener
+package mgr
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
-	// "sync"
 	"sync/atomic"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 
-	"github.com/davidwalter0/go-mutex"
 	"github.com/davidwalter0/loadbalancer/helper"
 	"github.com/davidwalter0/loadbalancer/ipmgr"
-	"github.com/davidwalter0/loadbalancer/kubeconfig"
 	"github.com/davidwalter0/loadbalancer/pipe"
 	"github.com/davidwalter0/loadbalancer/share"
 	"github.com/davidwalter0/loadbalancer/tracer"
 )
-
-var retries = 3
-
-// ManagedListener and it's dependent objects
-type ManagedListener struct {
-	pipe.Definition
-	Listener net.Listener        `json:"-"`
-	Pipes    map[*pipe.Pipe]bool `json:"-"`
-	Mutex    *mutex.Mutex        `json:"-"`
-	// Wg         sync.WaitGroup      `json:"-"`
-	Kubernetes bool `json:"-"`
-	Debug      bool `json:"-"`
-	n          uint64
-	MapAdd     chan *pipe.Pipe
-	MapRm      chan *pipe.Pipe
-	StopWatch  chan bool
-	Clientset  *kubernetes.Clientset
-	Active     uint64
-	V1Service  *v1.Service
-	InCluster  bool
-	*ipmgr.CIDR
-}
 
 // Monitor for this ManagedListener
 func (ml *ManagedListener) Monitor(args ...interface{}) func() {
@@ -69,6 +44,51 @@ func (ml *ManagedListener) Monitor(args ...interface{}) func() {
 		return ml.Mutex.MonitorTrace(args...)
 	}
 	return func() {}
+}
+
+// SetEndpoint from nodes or others
+func (ml *ManagedListener) SetEndpoint(ep *v1.Endpoints) {
+	defer ml.Monitor()()
+	if InCluster() {
+		if ml.Endpoints != nil && ep != nil {
+			lhsPorts := EndpointIPs(ml.Endpoints)
+			lhsIPs := EndpointSubsetPorts(ml.Endpoints)
+			rhsPorts := EndpointIPs(ep)
+			rhsIPs := EndpointSubsetPorts(ep)
+			if !lhsPorts.Equal(rhsPorts) || !lhsIPs.Equal(rhsIPs) {
+				ml.Changed = true
+				ml.Endpoints = ep
+			}
+		}
+	}
+}
+
+// SetService from nodes or others
+func (ml *ManagedListener) SetService(Service *v1.Service) {
+	defer ml.Monitor()()
+	ml.Service = Service
+	ml.Changed = true
+}
+
+// UpdateEndpoints when in a cluster and processing asynchronous
+// updates manage changes
+func (ml *ManagedListener) UpdateEndpoints() {
+	if InCluster() {
+		if ml.Endpoints == nil {
+			ml.Endpoints = Endpoints(ml.Clientset, ml.Service)
+			ml.Changed = true
+		}
+		if ml.Changed || !ml.canListen() {
+			ml.IPs = EndpointIPs(ml.Endpoints)
+			ml.Ports = EndpointSubsetPorts(ml.Endpoints)
+			if len(ml.Ports) > 0 {
+				ml.Port = ml.Ports[0]
+			} else {
+				log.Println(fmt.Errorf("%s", "No port endpoints available"))
+			}
+		}
+		ml.Changed = false
+	}
 }
 
 // Insert pipe to map of pipes in managed listener
@@ -107,7 +127,7 @@ func (ml *ManagedListener) PipeMapHandler() {
 	}
 }
 
-// Open listener for this endPtDef
+// Open / start Listening and run PipeMapHandler
 func (ml *ManagedListener) Open() {
 	if ml != nil {
 		defer trace.Tracer.ScopedTrace()()
@@ -117,28 +137,27 @@ func (ml *ManagedListener) Open() {
 	}
 }
 
-// LoadEndpoints queries the service name for endpoints
-func (ml *ManagedListener) LoadEndpoints() {
-	if ml != nil && ml.InCluster {
-		defer ml.Monitor()()
-		var ep = pipe.EP{}
-		if ep = kubeconfig.Endpoints(ml.Clientset, ml.Name, ml.Namespace); !ep.Equal(&ml.Endpoints) {
-			ml.Endpoints = ep
-		}
-	}
-}
-
-// NextEndPoint returns the next host:port pair if more than one
+// Next returns the next host:port pair if more than one
 // available round robin selection
-func (ml *ManagedListener) NextEndPoint() (sink string) {
+func (ml *ManagedListener) Next() (sink string) {
 	if ml != nil {
 		defer trace.Tracer.ScopedTrace()()
 		defer ml.Monitor()()
 		var n uint64
 		// Don't use k8s endpoint lookup if not in a k8s cluster
-		sinks := helper.ServiceSinks(ml.V1Service)
-		n = atomic.AddUint64(&ml.n, 1) % uint64(len(sinks))
-		sink = sinks[n]
+		var sinks []string
+		if !InCluster() {
+			sinks = helper.ServiceSinks(ml.Service)
+			n = atomic.AddUint64(&ml.n, 1) % uint64(len(sinks))
+			sink = sinks[n]
+		} else {
+			n = atomic.AddUint64(&ml.n, 1) % uint64(len(ml.IPs))
+			if len(ml.Ports) > 0 {
+				sink = Address(ml.IPs[n], ml.Port)
+			}
+		}
+		log.Println("sinks", sinks)
+		log.Println("sink", sink, ml.Port)
 	}
 	return
 }
@@ -156,38 +175,37 @@ func (ml *ManagedListener) StopWatchNotify() {
 	}
 }
 
-// EpWatcher check for endpoints
-func (ml *ManagedListener) EpWatcher() {
-	if ml != nil && ml.InCluster {
-		ticker := time.NewTicker(share.TickDelay)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ml.StopWatch:
-				return
-			case <-ticker.C:
-				ml.LoadEndpoints()
-				if ml.Debug {
-					log.Println(ml.Key, ml.Source, ml.Sink, ml.Name, ml.Namespace, ml.Debug, ml.Endpoints, "active", ml.Active)
-				}
-			}
-		}
-	}
+func (ml *ManagedListener) canListen() (ok bool) {
+	return ml.Port > 0 && len(ml.IPs) > 0 && len(ml.Ports) > 0 && ml.Endpoints != nil && ml.Service != nil
 }
 
 // Listening on managed listener
 func (ml *ManagedListener) Listening() {
 	defer trace.Tracer.ScopedTrace()()
 	defer ml.StopWatchNotify()
-	go ml.EpWatcher()
+
 	for {
+		if InCluster() {
+			ml.UpdateEndpoints()
+			for !ml.canListen() {
+				log.Println(fmt.Errorf("!canListen options not set\nport: %v\nips: %v\nports: %v\nservice: %v\nep: %v",
+					ml.Port,
+					ml.IPs,
+					ml.Ports,
+					ml.Service,
+					ml.Endpoints,
+				))
+				time.Sleep(time.Second)
+				ml.UpdateEndpoints()
+			}
+		}
 		var err error
 		var SourceConn, SinkConn net.Conn
 		if SourceConn, err = ml.Accept(); err != nil {
 			log.Printf("Source connection failed: %v\n", err)
 			break
 		}
-		sink := ml.NextEndPoint()
+		sink := ml.Next()
 		log.Println(sink)
 		SinkConn, err = net.Dial("tcp", sink)
 		if err != nil {
@@ -224,24 +242,24 @@ func (ml *ManagedListener) Close() {
 // SetExternalIP for service spec
 func (ml *ManagedListener) SetExternalIP() {
 	if ml.Clientset == nil {
-		panic("Clientset nil, can't UpdateExternalIP")
+		panic("Clientset nil, can't SetExternalIP")
 	}
-	client := ml.Clientset.CoreV1().Services(ml.V1Service.ObjectMeta.Namespace)
-	ml.refreshV1ServiceSpec(client)
+	client := ml.Clientset.CoreV1().Services(ml.Service.ObjectMeta.Namespace)
+	ml.refreshServiceSpec(client)
 	var ip = ipmgr.IP
 	if ml.CIDR != nil && len(ml.CIDR.IP) > 0 {
 		ip = ml.CIDR.IP
 	}
-	ml.V1Service.Spec.ExternalIPs = []string{ip}
-	log.Println("Setting ExternalIP", ml.V1Service.Spec.ExternalIPs)
-	client.Update(ml.V1Service)
-	ml.refreshV1ServiceSpec(client)
+	ml.Service.Spec.ExternalIPs = []string{ip}
+	log.Println("SetExternalIP", ml.Service.Spec.ExternalIPs)
+	client.Update(ml.Service)
+	ml.refreshServiceSpec(client)
 }
 
-func (ml *ManagedListener) refreshV1ServiceSpec(client v1core.ServiceInterface) {
-	service, err := client.Get(ml.V1Service.ObjectMeta.Name, metav1.GetOptions{})
+func (ml *ManagedListener) refreshServiceSpec(client v1core.ServiceInterface) {
+	service, err := client.Get(ml.Service.ObjectMeta.Name, metav1.GetOptions{})
 	if err == nil {
-		ml.V1Service = service
+		ml.Service = service
 	}
 }
 
@@ -250,24 +268,24 @@ func (ml *ManagedListener) RemoveExternalIP() {
 	if ml.Clientset == nil {
 		panic("Clientset nil, can't UpdateExternalIP")
 	}
-	client := ml.Clientset.CoreV1().Services(ml.V1Service.ObjectMeta.Namespace)
-	log.Println("Removing ExternalIP", ml.V1Service.Spec.ExternalIPs)
-	ml.refreshV1ServiceSpec(client)
-	ml.V1Service.Spec.ExternalIPs = []string{}
-	// ml.V1Service.ObjectMeta.Annotations = make(map[string]string)
-	_, err := client.Update(ml.V1Service)
+	client := ml.Clientset.CoreV1().Services(ml.Service.ObjectMeta.Namespace)
+	log.Println("Removing ExternalIP", ml.Service.Spec.ExternalIPs)
+	ml.refreshServiceSpec(client)
+	ml.Service.Spec.ExternalIPs = []string{}
+	// ml.Service.ObjectMeta.Annotations = make(map[string]string)
+	_, err := client.Update(ml.Service)
 	if err != nil {
 		log.Println("Error Removing ExternalIPs", err)
 		if ml.Debug {
-			dumpJSON(ml.V1Service)
+			dumpJSON(ml.Service)
 		}
 	}
 	for i := 0; i < 3 && err != nil; i++ {
 		log.Printf("Removing ExternalIPs Retry %d %v", i, err)
 		time.Sleep(time.Second)
-		ml.refreshV1ServiceSpec(client)
-		ml.V1Service.Spec.ExternalIPs = []string{}
-		_, err = client.Update(ml.V1Service)
+		ml.refreshServiceSpec(client)
+		ml.Service.Spec.ExternalIPs = []string{}
+		_, err = client.Update(ml.Service)
 
 	}
 }

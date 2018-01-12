@@ -25,7 +25,6 @@ import (
 	"github.com/davidwalter0/go-mutex"
 	"github.com/davidwalter0/loadbalancer/helper"
 	"github.com/davidwalter0/loadbalancer/ipmgr"
-	"github.com/davidwalter0/loadbalancer/listener"
 	"github.com/davidwalter0/loadbalancer/pipe"
 	"github.com/davidwalter0/loadbalancer/share"
 	"github.com/davidwalter0/loadbalancer/tracer"
@@ -37,24 +36,25 @@ func NewPipeDefinition(Service *v1.Service, envCfg *share.ServerCfg) *pipe.Defin
 	return &pipe.Definition{
 		Key:       helper.ServiceKey(Service),
 		Source:    helper.ServiceSource(Service),
-		EnableEp:  true,
-		InCluster: false,
 		Name:      Service.ObjectMeta.Name,
 		Namespace: Service.ObjectMeta.Namespace,
 		Debug:     envCfg.Debug,
-		Endpoints: helper.ServiceSinks(Service),
 	}
 }
 
-// NewManagedListenerFromV1Service from a kubernetes v1.Service
-func NewManagedListenerFromV1Service(Service *v1.Service,
+// NewManagedListener from a kubernetes v1.Service
+func NewManagedListener(Service *v1.Service,
 	envCfg *share.ServerCfg,
-	Clientset *kubernetes.Clientset) (ml *listener.ManagedListener) {
+	Clientset *kubernetes.Clientset) (ml *ManagedListener) {
 	defer trace.Tracer.ScopedTrace()()
 	var ip = helper.ServiceSourceIP(Service)
 	var c *ipmgr.CIDR = &ipmgr.CIDR{IP: ip, Bits: ipmgr.Bits, LinkDevice: ipmgr.LinkDevice}
+	var ep *v1.Endpoints
+	if InCluster() {
+		ep = Endpoints(Clientset, Service)
+	}
 
-	ml = &listener.ManagedListener{
+	ml = &ManagedListener{
 		Definition: *NewPipeDefinition(Service, envCfg),
 		Listener:   nil,
 		Pipes:      make(map[*pipe.Pipe]bool),
@@ -66,9 +66,38 @@ func NewManagedListenerFromV1Service(Service *v1.Service,
 		Debug:      envCfg.Debug,
 		Clientset:  Clientset,
 		Active:     0,
-		V1Service:  Service,
-		InCluster:  false,
+		Service:    Service,
+		Endpoints:  ep,
 		CIDR:       c,
+		// Port:       port,
+		// IPs:        ips,
+		// Ports:      ports,
 	}
 	return
 }
+
+/*
+// NewManagedListeners from a kubernetes v1.Service
+func NewManagedListeners(Service *v1.Service,
+	envCfg *share.ServerCfg,
+	Clientset *kubernetes.Clientset) (ml *ManagedListeners) {
+	defer trace.Tracer.ScopedTrace()()
+	var ip = helper.ServiceSourceIP(Service)
+	var c *ipmgr.CIDR = &ipmgr.CIDR{IP: ip, Bits: ipmgr.Bits, LinkDevice: ipmgr.LinkDevice}
+
+	ml = &ManagedListeners{
+		Listeners:  make(ManagedListenerMap),
+		Mutex:      &mutex.Mutex{},
+		Kubernetes: envCfg.Kubernetes,
+		Debug:      envCfg.Debug,
+		n:          0,
+		Clientset:  Clientset,
+		Active:     0,
+		Service:    Service,
+		CIDR:       c,
+		Addresses:  helper.UpstreamAddresses(),
+		Ports:      helper.ServicePorts(Service),
+	}
+	return
+}
+*/

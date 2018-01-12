@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/davidwalter0/go-cfg"
 	"github.com/davidwalter0/loadbalancer/kubeconfig"
@@ -64,7 +66,7 @@ func main() {
 	if clientset == nil {
 		log.Fatal("Kubernetes connection failed")
 	}
-
+	var err error
 	endpointWatcher := watch.NewQueueMgr(watch.EndpointAPIName, clientset)
 	go endpointWatcher.Run(1, 1)
 
@@ -75,13 +77,41 @@ func main() {
 			endpoint := item.Interface.(*v1.Endpoints)
 			fmt.Println(endpoint.Name)
 			for key, value := range endpoint.ObjectMeta.Labels {
-				fmt.Printf("  %-32s %s\n", key, value)
+				fmt.Printf("  %-32s %v\n", key, value)
 			}
-			if jsonText, err := json.MarshalIndent(endpoint, "", "  "); err == nil {
-				fmt.Println(string(jsonText))
-			} else {
-				fmt.Println(err)
+			for _, value := range endpoint.Subsets {
+				var service *v1.Service
+				namespace := endpoint.ObjectMeta.Namespace
+				name := endpoint.ObjectMeta.Name
+				service, err = clientset.CoreV1().Services(endpoint.ObjectMeta.Namespace).Get(name, metav1.GetOptions{})
+				if errors.IsNotFound(err) {
+					fmt.Printf("Service %s in namespace %s not found\n", name, namespace)
+				} else if statusError, isStatus := err.(*errors.StatusError); isStatus {
+					fmt.Printf("Error getting service %s in namespace %s: %v\n", name, namespace, statusError.ErrStatus.Message)
+				} else if err != nil {
+					panic(err.Error())
+				} else {
+					if service != nil && service.Spec.Type == v1.ServiceTypeLoadBalancer {
+						fmt.Printf("Found service %s in namespace %s\n", name, namespace)
+						// if jsonText, err := json.MarshalIndent(service.Spec, "", "  "); err == nil {
+						// 	fmt.Println(string(jsonText))
+						// } else {
+						// 	fmt.Println(err)
+						// }
+						if jsonText, err := json.MarshalIndent(value, "", "  "); err == nil {
+							fmt.Println(string(jsonText))
+						} else {
+							fmt.Println(err)
+						}
+					}
+				}
+				fmt.Printf("  %-32s %v\n", name, value.Addresses)
 			}
+			// if jsonText, err := json.MarshalIndent(endpoint, "", "  "); err == nil {
+			// 	fmt.Println(string(jsonText))
+			// } else {
+			// 	fmt.Println(err)
+			// }
 
 		default:
 			// non blocking channel, choose default and break

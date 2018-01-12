@@ -1,14 +1,13 @@
 ---
 # for versions before 1.8.0 use apps/v1beta1
-kind: Deployment
-apiVersion: extensions/v1beta1
+kind: DaemonSet
+apiVersion: apps/v1beta2
 metadata:
   name: loadbalancer
   namespace: default
   labels:
     app: loadbalancer
 spec:
-  replicas: 1
   selector:
     matchLabels:
       name: loadbalancer
@@ -31,13 +30,12 @@ spec:
       containers:
       - name: loadbalancer
         image: davidwalter/loadbalancer:latest
-        imagePullPolicy: Always
         # imagePullPolicy: IfNotPresent
-        # image: davidwalter/loadbalancer:0.3.0
+        imagePullPolicy: Always
         securityContext:
           privileged: true
         args:
-        - "/opt/sbin/loadbalancer"
+        - "/opt/sbin/llb"
         - "--linkdevice=eth2"
         - "--debug"
       terminationGracePeriodSeconds: 30

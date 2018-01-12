@@ -83,3 +83,25 @@ func ServiceSinks(Service *v1.Service) (Sink []string) {
 	}
 	return
 }
+
+// NodeSinks IP:NodePort from v1.Service
+func NodeSinks(Service *v1.Service) (Sink []string) {
+	nodeList := nodemgr.NodeListPtr()
+	// var IP string
+	var NodePort int32
+	for _, port := range Service.Spec.Ports {
+		if port.NodePort > 0 {
+			NodePort = port.NodePort
+			var nodes []string
+			for nodes = nodeList.GetNodes(); len(nodes) == 0; nodes = nodeList.GetNodes() {
+				log.Println("Node List is empty, sleep a bit")
+				time.Sleep(time.Second)
+			}
+			for _, node := range nodes {
+				Sink = append(Sink, fmt.Sprintf("%s:%d", node, NodePort))
+			}
+			break
+		}
+	}
+	return
+}

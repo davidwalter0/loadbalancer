@@ -56,6 +56,10 @@ func CheckInCluster() bool {
 	return len(os.Getenv("KUBERNETES_PORT")) > 0
 }
 
+func init() {
+	InCluster = CheckInCluster()
+}
+
 // NewClientset returns a new handle to a kubernetes client takes
 // kubeconfig path arg
 func NewClientset(kubeconfig string) *kubernetes.Clientset {
@@ -72,7 +76,7 @@ func NewClientset(kubeconfig string) *kubernetes.Clientset {
 		// try with a kubeconfig file
 		kubeRestConfig, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 	} else {
-		InCluster = true
+		// InCluster = true
 	}
 
 	if err == nil {
