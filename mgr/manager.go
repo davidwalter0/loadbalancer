@@ -1,4 +1,3 @@
-// Package mgr manages listeners for each forwarding pipe definition
 /*
 
 Copyright 2018 David Walter.
@@ -14,9 +13,10 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
 */
 
+// Package mgr manages listeners for each LoadBalancer definition
+// configured in the kubernetes services
 package mgr
 
 import (
@@ -32,7 +32,6 @@ import (
 	"github.com/davidwalter0/go-mutex"
 	"github.com/davidwalter0/loadbalancer/helper"
 	"github.com/davidwalter0/loadbalancer/ipmgr"
-	"github.com/davidwalter0/loadbalancer/listener"
 	"github.com/davidwalter0/loadbalancer/nodemgr"
 	"github.com/davidwalter0/loadbalancer/share"
 	"github.com/davidwalter0/loadbalancer/tracer"
@@ -50,22 +49,21 @@ var logStatusTimeout = time.Duration(600)
 
 // Mgr management info for listeners
 type Mgr struct {
-	Listeners      map[string]*listener.ManagedListener
-	Mutex          *mutex.Mutex
-	EnvCfg         *share.ServerCfg
-	NodeWatcher    *watch.QueueMgr
-	ServiceWatcher *watch.QueueMgr
-	InCluster      bool
+	Listeners       map[string]*ManagedListener
+	Mutex           *mutex.Mutex
+	EnvCfg          *share.ServerCfg
+	NodeWatcher     *watch.QueueMgr
+	ServiceWatcher  *watch.QueueMgr
+	EndpointWatcher *watch.QueueMgr
 	*kubernetes.Clientset
 }
 
 // NewMgr create a new Mgr
 func NewMgr(EnvCfg *share.ServerCfg, Clientset *kubernetes.Clientset) *Mgr {
 	return &Mgr{
-		Listeners: make(map[string]*listener.ManagedListener),
+		Listeners: make(map[string]*ManagedListener),
 		Mutex:     &mutex.Mutex{},
 		EnvCfg:    EnvCfg,
-		InCluster: false,
 		Clientset: Clientset,
 	}
 }
@@ -86,6 +84,14 @@ func (mgr *Mgr) Monitor() func() {
 	return mgr.Mutex.MonitorTrace()
 }
 
+// Get a listener by key
+func (mgr *Mgr) Get(Key string) (ml *ManagedListener, ok bool) {
+	defer trace.Tracer.ScopedTrace()()
+	defer mgr.Mutex.MonitorTrace("Get")()
+	ml, ok = mgr.Listeners[Key]
+	return
+}
+
 // Run primary processing loop
 func (mgr *Mgr) Run() {
 	log.Println("LinkDefaultCIDR", ipmgr.DefaultCIDR)
@@ -94,9 +100,13 @@ func (mgr *Mgr) Run() {
 
 	mgr.NodeWatcher = watch.NewQueueMgrListOpt(watch.NodeAPIName, mgr.Clientset, listOpts)
 	mgr.ServiceWatcher = watch.NewQueueMgr(watch.ServiceAPIName, mgr.Clientset)
+	mgr.EndpointWatcher = watch.NewQueueMgr(watch.EndpointAPIName, mgr.Clientset)
 
 	go mgr.NodeWatch()
 	go mgr.ServiceWatch()
+	if InCluster() {
+		go mgr.EndpointWatch()
+	}
 
 	select {
 	case <-shutdown:
@@ -106,11 +116,11 @@ func (mgr *Mgr) Run() {
 // Close removes a pipe definition
 func (mgr *Mgr) Close(Key string) {
 	defer trace.Tracer.ScopedTrace()()
-	defer mgr.Mutex.MonitorTrace("Remove")()
+	defer mgr.Mutex.MonitorTrace("Close")()
 
-	if listener, ok := mgr.Listeners[Key]; ok {
+	if ml, ok := mgr.Listeners[Key]; ok {
 		mgr.Listeners[Key].Close()
-		managedLBIPs.RemoveAddr(listener.CIDR.String(), listener.CIDR.LinkDevice)
+		managedLBIPs.RemoveAddr(ml.CIDR.String(), ml.CIDR.LinkDevice)
 		delete(mgr.Listeners, Key)
 	}
 }
@@ -118,11 +128,12 @@ func (mgr *Mgr) Close(Key string) {
 // Open adds/update a pipe definition, creates Managed
 // Listeners, IPs for load balancers with specified external ports
 func (mgr *Mgr) Open(Service *v1.Service) {
-	defer mgr.Mutex.MonitorTrace("Update")()
+	defer mgr.Mutex.MonitorTrace("Open")()
 	defer trace.Tracer.ScopedTrace()()
 	var Key = helper.ServiceKey(Service)
+
 	if current, ok := mgr.Listeners[Key]; !ok {
-		managedListener := NewManagedListenerFromV1Service(Service, mgr.EnvCfg, mgr.Clientset)
+		managedListener := NewManagedListener(Service, mgr.EnvCfg, mgr.Clientset)
 		managedLBIPs.RemoveAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
 		managedLBIPs.AddAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
 		managedListener.Listener = Listen(helper.ServiceSource(Service))
@@ -135,21 +146,23 @@ func (mgr *Mgr) Open(Service *v1.Service) {
 		mgr.Listeners[Key] = managedListener
 		mgr.Listeners[Key].Open()
 	} else {
-		managedListener := NewManagedListenerFromV1Service(Service, mgr.EnvCfg, mgr.Clientset)
+		managedListener := NewManagedListener(Service, mgr.EnvCfg, mgr.Clientset)
 		if !managedListener.Equal(current) {
-			mgr.Listeners[Key].Close()
-			managedLBIPs.RemoveAddr(current.CIDR.String(), current.CIDR.LinkDevice)
-			managedLBIPs.RemoveAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
-			managedLBIPs.AddAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
-			managedListener.Listener = Listen(helper.ServiceSource(Service))
-			if managedListener.Listener == nil {
-				log.Printf("Listen failed for %s service on %v tearing down\n", Key, managedListener.CIDR.String())
+			if managedListener.Service.Spec.LoadBalancerIP != current.Service.Spec.LoadBalancerIP {
+				mgr.Listeners[Key].Close()
+				// managedLBIPs.RemoveAddr(current.CIDR.String(), current.CIDR.LinkDevice)
 				managedLBIPs.RemoveAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
-				delete(mgr.Listeners, Key)
-				return
+				managedLBIPs.AddAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
+				managedListener.Listener = Listen(helper.ServiceSource(Service))
+				if managedListener.Listener == nil {
+					log.Printf("Listen failed for %s service on %v tearing down\n", Key, managedListener.CIDR.String())
+					managedLBIPs.RemoveAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
+					delete(mgr.Listeners, Key)
+					return
+				}
+				mgr.Listeners[Key] = managedListener
+				mgr.Listeners[Key].Open()
 			}
-			mgr.Listeners[Key] = managedListener
-			mgr.Listeners[Key].Open()
 		}
 	}
 }
@@ -171,7 +184,7 @@ func Listen(address string) (listener net.Listener) {
 // NodeWatch manage node workers list dynamically
 func (mgr *Mgr) NodeWatch() {
 	nodeList := nodemgr.NodeListPtr()
-	go mgr.NodeWatcher.Run(1, 1)
+	go mgr.NodeWatcher.Run(1, 10)
 	for {
 		select {
 		case <-shutdown:
@@ -180,18 +193,15 @@ func (mgr *Mgr) NodeWatch() {
 		case item, ok := <-mgr.NodeWatcher.QueueItems:
 			if ok {
 				Node := item.Interface.(*v1.Node)
-				// if mgr.EnvCfg.Debug {
-				// 	log.Printf("Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
-				// }
 				switch item.EventType {
 				case watch.ADD:
-					log.Printf("Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
+					log.Printf("NodeWatcher Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
 					nodeList.AddNode(Node.Spec.ExternalID)
 				// case watch.UPDATE:
 				// 	// Expect that nodes can't change their ip address w/o
 				// 	// destroy / create, ignore UPDATE for now
 				case watch.DELETE:
-					log.Printf("Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
+					log.Printf("NodeWatcher Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
 					nodeList.RemoveNode(Node.Spec.ExternalID)
 				}
 			} else {
@@ -203,7 +213,7 @@ func (mgr *Mgr) NodeWatch() {
 
 // ServiceWatch watch.QueueMgr for LoadBalancers
 func (mgr *Mgr) ServiceWatch() {
-	go mgr.ServiceWatcher.Run(1, 1)
+	go mgr.ServiceWatcher.Run(1, 5)
 	for {
 		select {
 		case <-shutdown:
@@ -217,20 +227,67 @@ func (mgr *Mgr) ServiceWatch() {
 				case watch.UPDATE:
 					Service := item.Interface.(*v1.Service)
 					if mgr.EnvCfg.Debug {
-						log.Printf("Event %s for service %s with type %s\n", item.Key, Service.Spec.Type, item.EventType)
+						log.Printf("ServiceWatcher Event %s for service %s with type %s\n", item.Key, Service.Spec.Type, item.EventType)
 					}
 					switch Service.Spec.Type {
-					case "LoadBalancer":
+					case v1.ServiceTypeLoadBalancer:
 						mgr.Open(Service)
 					default:
 						mgr.Close(item.Key)
 					}
 				case watch.DELETE:
-					log.Printf("Event %s for type %s\n", item.Key, item.EventType)
+					log.Printf("ServiceWatcher Event %s for type %s\n", item.Key, item.EventType)
 					mgr.Close(item.Key)
 				}
 			} else {
 				log.Fatal("error in Services Channel")
+			}
+		}
+	}
+}
+
+// SetService sets the endpoint addresses for a managed listener with
+// lock
+func (mgr *Mgr) SetService(Key string, Service *v1.Service) {
+	if ml, ok := mgr.Get(Key); ok {
+		ml.SetService(Service)
+	}
+}
+
+// SetEndpoint sets the endpoint addresses for a managed listener with
+// lock
+func (mgr *Mgr) SetEndpoint(Key string, ep *v1.Endpoints) {
+	if ml, ok := mgr.Get(Key); ok {
+		ml.SetEndpoint(ep)
+	}
+}
+
+// EndpointWatch watch.QueueMgr for LoadBalancers
+func (mgr *Mgr) EndpointWatch() {
+	go mgr.EndpointWatcher.Run(1, 1)
+	for {
+		select {
+		case <-shutdown:
+			log.Println("EndpointWatch shutting down...")
+			return
+		case item, ok := <-mgr.EndpointWatcher.QueueItems:
+			if ok {
+				if _, ok := mgr.Get(item.Key); ok {
+					if mgr.EnvCfg.Debug {
+						log.Printf("EndpointWatcher Event %s for type %s\n", item.Key, item.EventType)
+					}
+					ep := item.Interface.(*v1.Endpoints)
+					switch item.EventType {
+					case watch.ADD:
+						fallthrough
+					case watch.UPDATE:
+						mgr.SetEndpoint(item.Key, ep)
+					case watch.DELETE:
+						mgr.SetEndpoint(item.Key, ep)
+					}
+				}
+			} else {
+				log.Fatal("error in Endpoints Channel")
 			}
 		}
 	}

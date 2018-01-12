@@ -45,14 +45,19 @@ install: build
 
 image: build
 	docker build --tag=davidwalter/$(notdir $(PWD)):latest .
+
+version-tag:
 	. .version; \
 	docker tag davidwalter/$(notdir $(PWD)):latest \
 	davidwalter/$(notdir $(PWD)):$${version}
 
 push: image
 	docker push davidwalter/$(notdir $(PWD)):latest
+
+version-push:
 	. .version; \
 	docker push davidwalter/$(notdir $(PWD)):$${version}
+
 
 yaml: build
 	applytmpl < daemonset.yaml.tmpl > daemonset.yaml

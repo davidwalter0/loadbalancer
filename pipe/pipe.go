@@ -22,7 +22,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"time"
 
 	"github.com/davidwalter0/go-mutex"
 	"github.com/davidwalter0/loadbalancer/ipmgr"
@@ -43,7 +42,6 @@ func NewPipe(Key string, mapAdd, mapRm chan *Pipe, mutex *mutex.Mutex, source, s
 		Definition: *definition,
 	}
 
-	pipe.Endpoints = definition.Endpoints
 	mapAdd <- pipe
 	return
 }
@@ -79,33 +77,20 @@ func (pipe *Pipe) Connect() {
 		go func() {
 			defer trace.Tracer.ScopedTrace()()
 			defer pipe.Close()
+			log.Println("(pipe.SinkConn, pipe.SourceConn)", pipe.SinkConn, pipe.SourceConn)
 			if _, err := io.Copy(pipe.SinkConn, pipe.SourceConn); err != nil {
 				log.Println(err)
 			}
 			done <- true
 		}()
 		go func() {
+			log.Println("(pipe.SourceConn, pipe.SinkConn)", pipe.SourceConn, pipe.SinkConn)
 			defer trace.Tracer.ScopedTrace()()
 			defer pipe.Close()
 			if _, err := io.Copy(pipe.SourceConn, pipe.SinkConn); err != nil {
 				log.Println(err)
 			}
 			done <- true
-		}()
-		go func() {
-			log.Println("share.Queue.Push(&pipe.Definition)", pipe.Definition)
-			// share.Queue.Push(&pipe.Definition)
-			for {
-				ticker := time.NewTicker(share.TickDelay)
-				defer ticker.Stop()
-				select {
-				case <-done:
-					return
-				case <-ticker.C:
-					log.Println("share.Queue.Push(&pipe.Definition)", pipe.Definition)
-					// share.Queue.Push(&pipe.Definition)
-				}
-			}
 		}()
 	}
 }
