@@ -20,25 +20,21 @@ package pipe
 
 import (
 	"io"
-	"log"
 	"net"
 
-	"github.com/davidwalter0/go-mutex"
 	"github.com/davidwalter0/loadbalancer/ipmgr"
 	"github.com/davidwalter0/loadbalancer/share"
 	"github.com/davidwalter0/loadbalancer/tracer"
 )
 
 // NewPipe creates a Pipe and returns a pointer to the same
-func NewPipe(Key string, mapAdd, mapRm chan *Pipe, mutex *mutex.Mutex, source, sink net.Conn, definition *Definition) (pipe *Pipe) {
+func NewPipe(Key string, mapAdd, mapRm chan *Pipe, source, sink net.Conn, definition *Definition) (pipe *Pipe) {
 	defer trace.Tracer.ScopedTrace()()
-	defer mutex.Monitor()()
 	pipe = &Pipe{
 		Key:        Key,
 		SourceConn: source,
 		SinkConn:   sink,
 		MapRm:      mapRm,
-		Mutex:      mutex,
 		Definition: *definition,
 	}
 
@@ -54,19 +50,9 @@ type Pipe struct {
 	SinkConn   net.Conn
 	MapRm      chan *Pipe
 	State      uint64
-	Mutex      *mutex.Mutex
 	Mode       string
 	Definition
 	*ipmgr.CIDR
-}
-
-// Monitor lock link into
-func (pipe *Pipe) Monitor(args ...interface{}) func() {
-	if pipe != nil {
-		defer trace.Tracer.ScopedTrace(args...)()
-		return pipe.Mutex.MonitorTrace(args...)
-	}
-	return func() {}
 }
 
 // Connect opens a link between source and sink
@@ -77,18 +63,14 @@ func (pipe *Pipe) Connect() {
 		go func() {
 			defer trace.Tracer.ScopedTrace()()
 			defer pipe.Close()
-			log.Println("(pipe.SinkConn, pipe.SourceConn)", pipe.SinkConn, pipe.SourceConn)
 			if _, err := io.Copy(pipe.SinkConn, pipe.SourceConn); err != nil {
-				log.Println(err)
 			}
 			done <- true
 		}()
 		go func() {
-			log.Println("(pipe.SourceConn, pipe.SinkConn)", pipe.SourceConn, pipe.SinkConn)
 			defer trace.Tracer.ScopedTrace()()
 			defer pipe.Close()
 			if _, err := io.Copy(pipe.SourceConn, pipe.SinkConn); err != nil {
-				log.Println(err)
 			}
 			done <- true
 		}()
@@ -99,15 +81,12 @@ func (pipe *Pipe) Connect() {
 func (pipe *Pipe) Close() {
 	if pipe != nil {
 		defer trace.Tracer.ScopedTrace()()
-		defer pipe.Monitor()()
 		if pipe.State == share.Open {
 			pipe.MapRm <- pipe
 			pipe.State = share.Closed
 			if err := pipe.SinkConn.Close(); err != nil {
-				log.Println(err)
 			}
 			if err := pipe.SourceConn.Close(); err != nil {
-				log.Println(err)
 			}
 		}
 	}

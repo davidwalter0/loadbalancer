@@ -52,7 +52,6 @@ type Definition struct {
 	Namespace string `json:"namespace" help:"service namespace"`
 	Mode      string `json:"mode"      help:"mode of use for this service"`
 	Debug     bool   `json:"debug"     help:"enable debug for this pipe"`
-	InCluster bool   `json:"incluster" help:"incluster forwarding vs external forward to NodePort(s)"`
 }
 
 // NewFromDefinition create and initialize a Definition
@@ -68,7 +67,6 @@ func NewFromDefinition(pipe *Definition, inCluster bool) (p *Definition) {
 			Namespace: pipe.Namespace,
 			Debug:     pipe.Debug,
 			Mode:      pipe.Mode,
-			InCluster: inCluster,
 		}
 	}
 	return
@@ -86,8 +84,7 @@ func (lhs *Definition) Equal(rhs *Definition) bool {
 		lhs.Name == rhs.Name &&
 		lhs.Namespace == rhs.Namespace &&
 		lhs.Mode == rhs.Mode &&
-		lhs.Debug == rhs.Debug &&
-		lhs.InCluster == rhs.InCluster
+		lhs.Debug == rhs.Debug
 }
 
 // Copy points w/o erasing EndPoints
@@ -99,6 +96,5 @@ func (lhs *Definition) Copy(rhs *Definition) *Definition {
 	lhs.Namespace = rhs.Namespace
 	lhs.Mode = rhs.Mode
 	lhs.Debug = rhs.Debug
-	lhs.InCluster = rhs.InCluster
 	return lhs
 }

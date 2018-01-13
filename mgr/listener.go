@@ -86,8 +86,8 @@ func (ml *ManagedListener) UpdateEndpoints() {
 			} else {
 				log.Println(fmt.Errorf("%s", "No port endpoints available"))
 			}
+			ml.Changed = false
 		}
-		ml.Changed = false
 	}
 }
 
@@ -95,7 +95,7 @@ func (ml *ManagedListener) UpdateEndpoints() {
 func (ml *ManagedListener) Insert(pipe *pipe.Pipe) {
 	defer trace.Tracer.ScopedTrace("MapAdd", *pipe)()
 	pipe.State = share.Open
-	defer pipe.Monitor()()
+	defer ml.Monitor()()
 	ml.Pipes[pipe] = true
 	ml.Active = uint64(len(ml.Pipes))
 }
@@ -104,7 +104,7 @@ func (ml *ManagedListener) Insert(pipe *pipe.Pipe) {
 func (ml *ManagedListener) Delete(pipe *pipe.Pipe) {
 	defer trace.Tracer.ScopedTrace("MapRm", *pipe)()
 	pipe.State = share.Closed
-	defer pipe.Monitor()()
+	defer ml.Monitor()()
 	delete(ml.Pipes, pipe)
 	ml.Active = uint64(len(ml.Pipes))
 }
@@ -156,8 +156,7 @@ func (ml *ManagedListener) Next() (sink string) {
 				sink = Address(ml.IPs[n], ml.Port)
 			}
 		}
-		log.Println("sinks", sinks)
-		log.Println("sink", sink, ml.Port)
+		log.Printf("Key %s %s <-> upstream %s:%d\n", ml.Key, ml.Source, sink, ml.Port)
 	}
 	return
 }
@@ -202,17 +201,16 @@ func (ml *ManagedListener) Listening() {
 		var err error
 		var SourceConn, SinkConn net.Conn
 		if SourceConn, err = ml.Accept(); err != nil {
-			log.Printf("Source connection failed: %v\n", err)
+			log.Printf("Downstream connection failed: %v\n", err)
 			break
 		}
 		sink := ml.Next()
-		log.Println(sink)
 		SinkConn, err = net.Dial("tcp", sink)
 		if err != nil {
-			log.Printf("Sink connection failed: %v\n", err)
+			log.Printf("Upstream connection failed: %v\n", err)
 			break
 		}
-		var pipe = pipe.NewPipe(ml.Key, ml.MapAdd, ml.MapRm, ml.Mutex, SourceConn, SinkConn, &ml.Definition)
+		var pipe = pipe.NewPipe(ml.Key, ml.MapAdd, ml.MapRm, SourceConn, SinkConn, &ml.Definition)
 		go pipe.Connect()
 	}
 }
@@ -221,11 +219,11 @@ func (ml *ManagedListener) Listening() {
 func (ml *ManagedListener) Close() {
 	if ml != nil {
 		defer trace.Tracer.ScopedTrace()()
+		defer ml.Monitor()()
 		if ml.Listener != nil {
 			if err := ml.Listener.Close(); err != nil {
 				log.Println("Error closing listener", ml.Listener)
 			}
-			defer ml.Monitor()()
 			var pipes = []*pipe.Pipe{}
 			for pipe := range ml.Pipes {
 				go pipe.Close()
