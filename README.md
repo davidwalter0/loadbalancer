@@ -14,8 +14,11 @@ subnet
 ---
 ### Data Flow
 
-
+#### External LoadBalancer
 ![alt text](https://github.com/davidwalter0/loadbalancer/blob/master/images/kubernetes-loadbalancer.png "Application <-> Load Balancer <-> Kubernetes Service <-> Kubernetes Server Application")
+
+#### In Cluster LoadBalancer
+![alt text](https://github.com/davidwalter0/loadbalancer/blob/master/images/kubernetes-ep-loadbalancer.png "Application <-> Load Balancer <-> Kubernetes Pod Endpoint IP <-> Kubernetes Server Application")
 
 #### Flow / Sequence Description
 - Connect to kubernetes cluster
