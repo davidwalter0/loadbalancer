@@ -62,6 +62,7 @@ type ManagedListener struct {
 	StopWatch  chan bool             `json:"-"`
 	n          uint64
 	Active     uint64
+	Key        string
 	Service    *v1.Service
 	Endpoints  *v1.Endpoints
 	Changed    bool

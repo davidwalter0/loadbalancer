@@ -223,6 +223,7 @@ func (mgr *Mgr) ServiceWatch() {
 			if ok {
 				switch item.EventType {
 				case watch.ADD:
+					log.Printf("ServiceWatcher Event %s for type %s\n", item.Key, item.EventType)
 					fallthrough
 				case watch.UPDATE:
 					Service := item.Interface.(*v1.Service)
@@ -279,10 +280,12 @@ func (mgr *Mgr) EndpointWatch() {
 					ep := item.Interface.(*v1.Endpoints)
 					switch item.EventType {
 					case watch.ADD:
+						log.Printf("EndpointWatcher Event %s for type %s\n", item.Key, item.EventType)
 						fallthrough
 					case watch.UPDATE:
 						mgr.SetEndpoint(item.Key, ep)
 					case watch.DELETE:
+						log.Printf("EndpointWatcher Event %s for type %s\n", item.Key, item.EventType)
 						mgr.SetEndpoint(item.Key, ep)
 					}
 				}

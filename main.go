@@ -28,7 +28,7 @@ import (
 
 	"github.com/davidwalter0/loadbalancer/global"
 	"github.com/davidwalter0/loadbalancer/kubeconfig"
-	mgmt "github.com/davidwalter0/loadbalancer/manager"
+	"github.com/davidwalter0/loadbalancer/mgr"
 )
 
 var envCfg = global.Cfg()
@@ -76,7 +76,7 @@ func main() {
 	if clientset == nil {
 		log.Fatal("Kubernetes connection failed")
 	}
-	var mgr *mgmt.Mgr = mgmt.NewMgr(envCfg, clientset)
+	var mgr *mgr.Mgr = mgr.NewMgr(envCfg, clientset)
 	go mgr.Run()
 	select {
 	case signal := <-signals:
