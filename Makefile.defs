@@ -59,6 +59,22 @@ $(warning $(message))
 $(error environment variable LINK_DEVICE not set. LINK_DEVICE is the runtime host link device.)
 endif
 
+define info
+
+echo "--------------------------------------------"
+echo "DOCKER_USER = $(DOCKER_USER)"
+echo "IMAGE       = $(IMAGE)      "
+echo "TAG         = $(TAG)"
+echo "APPL        = $(APPL)"
+echo "LINK_DEVICE = $(LINK_DEVICE)"
+echo "Target $(target)"
+echo "--------------------------------------------"
+
+echo "Build deps $(build_deps)"
+echo "Depends $(depends)"
+
+endef
+
 # Local variables:
 # mode: makefile
 # end:

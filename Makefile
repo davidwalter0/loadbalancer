@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-.PHONY: install clean image build yaml appl get push tag tag-push
+.PHONY: install clean build yaml appl get push tag tag-push info
 # To enable kubernetes commands a valid configuration is required
+
 export GOPATH=/go
 export kubectl=${GOPATH}/bin/kubectl  --kubeconfig=${PWD}/cluster/auth/kubeconfig
 SHELL=/bin/bash
@@ -25,43 +26,28 @@ export IMAGE=$(notdir $(PWD))
 # extract tag from latest commit, use tag for version
 export gittag=$$(git tag -l --contains $(git log --pretty="format:%h"  -n1))
 export TAG=$(shell if git diff --quiet --ignore-submodules HEAD && [[ -n $(gittag) ]]; then echo $(gittag); else echo "canary"; fi)
-
-include Makefile.defs
 depends:=$(shell ls -1 */*.go| grep -v test)
-
 build_deps:=$(wildcard *.go)
 target:=bin/$(APPL)
 
-all:
-	@echo $(state)
+include Makefile.defs
 
+all: info
 
-define state
-
-echo "--------------------------------------------"
-echo "DOCKER_USER = $(DOCKER_USER)"
-echo "IMAGE       = $(IMAGE)      "
-echo "TAG         = $(TAG)"
-echo "APPL        = $(APPL)"
-echo "LINK_DEVICE = $(LINK_DEVICE)"
-echo "Target $(target)"
-echo "--------------------------------------------"
-
-echo "Build deps $(build_deps)"
-echo "Depends $(depends)"
-
-endef
+info: 
+	@echo $(info)
 
 etags:
 	etags $(depends) $(build_deps)
 
 .dep:
 	mkdir -p .dep
+	touch .dep --reference=Makefile
 
-build: $(target)
+build: info $(target)
 
 $(target): .dep bin $(build_deps) $(depends) Makefile
-	@echo $(state)
+	@echo $(info)
 	@echo "Building via % rule for $@ from $<"
 	@echo $(depends)
 	@if go version|grep -q 1.4 ; then														\
@@ -74,37 +60,35 @@ $(target): .dep bin $(build_deps) $(depends) Makefile
 
 install: .dep/install
 
-.dep/install: .dep $(target)
+.dep/install: info .dep $(target)
 	cp $(target) /go/bin/
 	touch $@
 
-image: build .dep .dep/image-$(DOCKER_USER)-$(IMAGE)-$(TAG)
-
-.dep/image-$(DOCKER_USER)-$(IMAGE)-$(TAG): .dep $(target)
-	docker build --tag=$(DOCKER_USER)/$(APPL):latest .
+.dep/image-$(DOCKER_USER)-$(IMAGE)-latest: .dep
+	docker build --tag=$(DOCKER_USER)/$(IMAGE):latest .
 	touch $@ 
 
-.dep/tag-$(DOCKER_USER)-$(IMAGE)-$(TAG): .dep/image-$(DOCKER_USER)-$(IMAGE)-$(TAG)
-	docker tag $(DOCKER_USER)/$(APPL):latest \
-	$(DOCKER_USER)/$(APPL):$${TAG}
+tag: info .dep .dep/tag-$(DOCKER_USER)-$(IMAGE)-$(TAG)
+	@echo $(info)
+
+.dep/tag-$(DOCKER_USER)-$(IMAGE)-$(TAG): .dep/image-$(DOCKER_USER)-$(IMAGE)-latest
+	docker tag $(DOCKER_USER)/$(IMAGE):latest \
+	$(DOCKER_USER)/$(IMAGE):$${TAG}
 	touch $@ 
 
-tag: .dep .dep/tag-$(DOCKER_USER)-$(IMAGE)-$(TAG)
-	@echo $(state)
+push: info .dep .dep/push-$(DOCKER_USER)-$(IMAGE)-latest
 
-push: .dep .dep/push-$(DOCKER_USER)-$(IMAGE)-latest
-
-.dep/push-$(DOCKER_USER)-$(IMAGE)-latest: .dep image
-	docker push $(DOCKER_USER)/$(APPL):latest
+.dep/push-$(DOCKER_USER)-$(IMAGE)-latest: .dep/image-$(DOCKER_USER)-$(IMAGE)-latest
+	docker push $(DOCKER_USER)/$(IMAGE):latest
 	touch $@
 
-tag-push: .dep/tag-$(DOCKER_USER)-$(IMAGE)-$(TAG) .dep/tag-push-$(DOCKER_USER)-$(IMAGE)-$(TAG)
+tag-push: info .dep/tag-$(DOCKER_USER)-$(IMAGE)-$(TAG) .dep/tag-push-$(DOCKER_USER)-$(IMAGE)-$(TAG)
 
-.dep/tag-push-$(DOCKER_USER)-$(IMAGE)-$(TAG): .dep 
-	docker push $(DOCKER_USER)/$(APPL):$${TAG}
+.dep/tag-push-$(DOCKER_USER)-$(IMAGE)-$(TAG): .dep/image-$(DOCKER_USER)-$(IMAGE)-latest
+	docker push $(DOCKER_USER)/$(IMAGE):$(TAG)
 	touch $@
 
-yaml: .dep .dep/yaml-$(DOCKER_USER)-$(IMAGE)-$(TAG)
+yaml: info .dep .dep/yaml-$(DOCKER_USER)-$(IMAGE)-$(TAG)
 
 .dep/yaml-$(DOCKER_USER)-$(IMAGE)-$(TAG): .dep $(wildcard examples/manifests/*yaml.tmpl)
 	applytmpl < examples/manifests/loadbalancer-daemonset.yaml.tmpl > daemonset.yaml
@@ -113,14 +97,14 @@ yaml: .dep .dep/yaml-$(DOCKER_USER)-$(IMAGE)-$(TAG)
 delete: .dep/delete
 
 .dep/delete: yaml
-	$(kubectl) delete ds/forwarder || true
+	$(kubectl) delete ds/$(APPL) || true
 
-deploy: .dep/deploy
+deploy: info .dep/deploy
 
 .dep/deploy: .dep yaml
 	$(kubectl) apply -f daemonset.yaml
 
-get: .dep 
+get: info .dep 
 
 .dep/get: .dep yaml
 	$(kubectl) get -f daemonset.yaml
