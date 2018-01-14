@@ -14,7 +14,7 @@ subnet
 ---
 ### Data Flow
 
-#### External LoadBalancer
+#### External (Out of Cluster) LoadBalancer
 ![alt text](https://github.com/davidwalter0/loadbalancer/blob/master/images/kubernetes-loadbalancer.png "Application <-> Load Balancer <-> Kubernetes Service <-> Kubernetes Server Application")
 
 #### In Cluster LoadBalancer
@@ -70,6 +70,7 @@ configured with a bridged adapter (see below) and tagged as the
 
 ```
 LINK_DEVICE=eth2 DOCKER_USER=davidwalter IMAGE=loadbalancer make build image yaml push push-tag apply
+```
 
 **Build and run locally**
 
