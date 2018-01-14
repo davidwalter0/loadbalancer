@@ -92,9 +92,9 @@ image: build .dep .dep/image-$(DOCKER_USER)-$(IMAGE)-$(TAG)
 tag: .dep .dep/tag-$(DOCKER_USER)-$(IMAGE)-$(TAG)
 	@echo $(state)
 
-push: .dep .dep/push-$(DOCKER_USER)-$(IMAGE)-$(TAG)
+push: .dep .dep/push-$(DOCKER_USER)-$(IMAGE)-latest
 
-.dep/push-$(DOCKER_USER)-$(IMAGE)-$(TAG): .dep image
+.dep/push-$(DOCKER_USER)-$(IMAGE)-latest: .dep image
 	docker push $(DOCKER_USER)/$(APPL):latest
 	touch $@
 
