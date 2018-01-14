@@ -23,8 +23,8 @@ export DIR=$(MAKEFILE_DIR)
 export APPL=$(notdir $(PWD))
 export IMAGE=$(notdir $(PWD))
 # extract tag from latest commit, use tag for version
-export gittag=$$(git tag -l --contains $(git hsh -n1))
-export TAG=$(shell if [[ -n $(gittag) ]]; then echo $(gittag); else echo "canary"; fi)
+export gittag=$$(git tag -l --contains $(git log --pretty="format:%h"  -n1))
+export TAG=$(shell if git diff --quiet --ignore-submodules HEAD && [[ -n $(gittag) ]]; then echo $(gittag); else echo "canary"; fi)
 
 include Makefile.defs
 depends:=$(shell ls -1 */*.go| grep -v test)
@@ -78,7 +78,7 @@ install: .dep/install
 	cp $(target) /go/bin/
 	touch $@
 
-image: .dep .dep/image-$(DOCKER_USER)-$(IMAGE)-$(TAG)
+image: build .dep .dep/image-$(DOCKER_USER)-$(IMAGE)-$(TAG)
 
 .dep/image-$(DOCKER_USER)-$(IMAGE)-$(TAG): .dep $(target)
 	docker build --tag=$(DOCKER_USER)/$(APPL):latest .
