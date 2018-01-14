@@ -24,7 +24,7 @@ export APPL=$(notdir $(PWD))
 export IMAGE=$(notdir $(PWD))
 # extract tag from latest commit, use tag for version
 export gittag=$$(git tag -l --contains $(git hsh -n1))
-export TAG=$(shell if [[ -n $${gittag} ]]; then echo $${gittag}; else echo "canary"; fi)
+export TAG=$(shell if [[ -n $(gittag) ]]; then echo $(gittag); else echo "canary"; fi)
 
 include Makefile.defs
 depends:=$(shell ls -1 */*.go| grep -v test)
