@@ -59,10 +59,22 @@ Manage routes / addresses for external ip addresses
 ## Example use
 
 
-Run loadbalancer with superuser permissions so that loadbalancer can modify routes and
-use privileged ports.
+Build and run loadbalancer with superuser permissions so that
+loadbalancer can modify routes use privileged ports.
+
+You can run it with sudo local to the VMs or run on a kubernetes node
+configured with a bridged adapter (see below) and tagged as the
+`node-role.kubernetes.io/load-balancer`
+
+**Build and push**
 
 ```
+LINK_DEVICE=eth2 DOCKER_USER=davidwalter IMAGE=loadbalancer make build image yaml push push-tag apply
+
+**Build and run locally**
+
+```
+make build
 sudo bin/loadbalancer --kubeconfig cluster/auth/kubeconfig --linkdevice eth0
 ```
 

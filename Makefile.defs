@@ -1,0 +1,64 @@
+# Copyright 2018 David Walter.
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+define message
+
+Env Variable Name Value
+----------------- ---------------------------
+APPL              $(APPL)
+DOCKER_USER       $(DOCKER_USER)
+IMAGE             $(IMAGE)
+JUMP_USER         $(JUMP_USER)
+LINK_DEVICE       $(LINK_DEVICE)
+TAG               $(TAG)
+
+This project uses a golang template processing utility to update the
+configuration and depends on environment variables IMAGE, TAG,
+DOCKER_USER
+
+Environment variables are referenced as camel case in template double
+curly braces like
+
+Name           Go Template Variable
+------------   --------------------
+APPL           {{.Appl}}
+DOCKER_USER    {{.DockerUser}}
+IMAGE          {{.Image}}
+TAG            {{.Tag}}
+LINK_DEVICE    {{.LinkDevice}}
+
+The repo uses template util github.com/davidwalter0/applytmpl
+
+endef
+
+ifeq ($(DOCKER_USER),)
+$(warning $(message))
+$(error environment variable DOCKER_USER not set. DOCKER_USER is a hub.docker.com login userid.)
+endif
+ifeq ($(TAG),)
+$(warning $(message))
+$(error environment variable TAG not set. TAG is the build and image tag.)
+endif
+ifeq ($(IMAGE),)
+$(warning $(message))
+$(error environment variable IMAGE not set. IMAGE is the container image name.)
+endif
+ifeq ($(LINK_DEVICE),)
+$(warning $(message))
+$(error environment variable LINK_DEVICE not set. LINK_DEVICE is the runtime host link device.)
+endif
+
+# Local variables:
+# mode: makefile
+# end:
