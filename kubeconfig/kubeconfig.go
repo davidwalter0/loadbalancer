@@ -29,13 +29,8 @@ limitations under the License.
 package kubeconfig
 
 import (
-	"fmt"
-	"log"
 	"os"
 
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
 
@@ -84,55 +79,4 @@ func NewClientset(kubeconfig string) *kubernetes.Clientset {
 		clientset, err = kubernetes.NewForConfig(kubeRestConfig)
 	}
 	return clientset
-}
-
-// ErrorHandler print error message based on error type
-func ErrorHandler(name string, err error) {
-	if errors.IsNotFound(err) {
-		log.Printf("%s not found\n", name)
-	} else if statusError, isStatus := err.(*errors.StatusError); isStatus {
-		log.Printf("Error getting %s %v\n", name, statusError.ErrStatus.Message)
-	} else if err != nil {
-		panic(err.Error())
-	} else {
-		log.Printf("Found %s\n", name)
-	}
-}
-
-// Endpoints for a service name in the given namespace
-func Endpoints(clientset *kubernetes.Clientset, name, namespace string) (endpoints []string) {
-	if clientset != nil {
-		var eps *v1.EndpointsList
-		var err error
-		// use the current context in kubeconfig
-		eps, err = clientset.CoreV1().Endpoints(namespace).List(metav1.ListOptions{})
-		if err == nil {
-			for _, ep := range eps.Items {
-				meta := ep.ObjectMeta
-				if name == meta.Name {
-					for _, set := range ep.Subsets {
-						for _, address := range set.Addresses {
-							for _, port := range set.Ports {
-								if len(meta.Namespace) > 0 {
-									namespace = meta.Namespace
-								}
-								endpoint := fmt.Sprintf("%s:%d", address.IP, port.Port)
-								endpoints = append(endpoints, endpoint)
-							}
-						}
-					}
-				}
-			}
-		} else {
-			log.Println("Endpoint error", err)
-		}
-	}
-	return
-}
-
-func homeDir() string {
-	if h := os.Getenv("HOME"); h != "" {
-		return h
-	}
-	return os.Getenv("USERPROFILE") // windows
 }

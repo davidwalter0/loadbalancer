@@ -36,13 +36,12 @@ import (
 // ManagedListeners manages multiple managed listeners for multiple
 // ports and endpoints
 type ManagedListeners struct {
-	Listeners  ManagedListenerMap
-	Mutex      *mutex.Mutex `json:"-"`
-	Kubernetes bool         `json:"-"`
-	Debug      bool         `json:"-"`
-	Clientset  *kubernetes.Clientset
-	Active     uint64
-	Service    *v1.Service
+	Listeners ManagedListenerMap
+	Mutex     *mutex.Mutex `json:"-"`
+	Debug     bool         `json:"-"`
+	Clientset *kubernetes.Clientset
+	Active    uint64
+	Service   *v1.Service
 	*ipmgr.CIDR
 	IPs
 	Ports
@@ -51,21 +50,20 @@ type ManagedListeners struct {
 // ManagedListener and it's dependent objects
 type ManagedListener struct {
 	pipe.Definition
-	Listener   net.Listener          `json:"-"`
-	Pipes      map[*pipe.Pipe]bool   `json:"-"`
-	Mutex      *mutex.Mutex          `json:"-"`
-	Kubernetes bool                  `json:"-"`
-	Debug      bool                  `json:"-"`
-	MapAdd     chan *pipe.Pipe       `json:"-"`
-	MapRm      chan *pipe.Pipe       `json:"-"`
-	Clientset  *kubernetes.Clientset `json:"-"`
-	StopWatch  chan bool             `json:"-"`
-	n          uint64
-	Active     uint64
-	Key        string
-	Service    *v1.Service
-	Endpoints  *v1.Endpoints
-	Changed    bool
+	Listener  net.Listener          `json:"-"`
+	Pipes     map[*pipe.Pipe]bool   `json:"-"`
+	Mutex     *mutex.Mutex          `json:"-"`
+	Debug     bool                  `json:"-"`
+	MapAdd    chan *pipe.Pipe       `json:"-"`
+	MapRm     chan *pipe.Pipe       `json:"-"`
+	Clientset *kubernetes.Clientset `json:"-"`
+	StopWatch chan bool             `json:"-"`
+	n         uint64
+	Active    uint64
+	Key       string
+	Service   *v1.Service
+	Endpoints *v1.Endpoints
+	Changed   bool
 	Port
 	IPs
 	Ports

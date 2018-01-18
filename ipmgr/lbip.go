@@ -55,11 +55,6 @@ func (mips *LoadBalancerIPs) AddAddr(IPNet, LinkDevice string) {
 	log.Printf("AddAddr %v %v\n", IPNet, LinkDevice)
 	defer monitor()()
 	defer trace.Tracer.ScopedTrace()()
-	if Debug {
-		for key := range *mips {
-			log.Println(key)
-		}
-	}
 	if linkAddr, ok := (*mips)[IPNet]; !ok {
 		if link, err := netlink.LinkByName(LinkDevice); err == nil {
 			if Debug {
@@ -110,11 +105,6 @@ func (mips *LoadBalancerIPs) RemoveAddr(IPNet, LinkDevice string) {
 	}
 	defer monitor()()
 	defer trace.Tracer.ScopedTrace()()
-	if Debug {
-		for key := range *mips {
-			log.Println(key)
-		}
-	}
 	if linkAddr, ok := (*mips)[IPNet]; ok {
 		if Debug {
 			log.Printf("RemoveAddr %v %v LinkAddr: %v Count: %d\n", IPNet, LinkDevice, *linkAddr, linkAddr.Count)
@@ -128,7 +118,6 @@ func (mips *LoadBalancerIPs) RemoveAddr(IPNet, LinkDevice string) {
 			if link, err := netlink.LinkByName(LinkDevice); err == nil {
 				if Debug {
 					log.Printf("RemoveAddr %v %v link: %v\n", IPNet, LinkDevice, link)
-					log.Println(addr, link)
 				}
 				if link != nil && !_InTest_ {
 					if err := netlink.AddrDel(link, addr); err != nil {
