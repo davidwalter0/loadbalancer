@@ -250,7 +250,9 @@ func (ml *ManagedListener) SetExternalIP() {
 	}
 	ml.Service.Spec.ExternalIPs = []string{ip}
 	log.Println("SetExternalIP", ml.Service.Spec.ExternalIPs)
-	client.Update(ml.Service)
+	if _, err := client.Update(ml.Service); err != nil {
+		log.Println("Problem with client update:", err)
+	}
 	ml.refreshServiceSpec(client)
 }
 

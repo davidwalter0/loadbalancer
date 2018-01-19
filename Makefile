@@ -15,7 +15,7 @@
 .PHONY: install clean build yaml appl get push tag tag-push info
 # To enable kubernetes commands a valid configuration is required
 
-export GOPATH=/go
+# export GOPATH=/go
 export kubectl=${GOPATH}/bin/kubectl  --kubeconfig=${PWD}/cluster/auth/kubeconfig
 SHELL=/bin/bash
 MAKEFILE_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
