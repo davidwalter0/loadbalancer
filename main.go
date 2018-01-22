@@ -57,7 +57,6 @@ var signals = make(chan os.Signal, 1)
 var Message = `
 Copyright 2018 David Walter.
 
-go get github.com/davidwalter0/llb
 `
 
 func init() {
