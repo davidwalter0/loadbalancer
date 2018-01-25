@@ -20,9 +20,9 @@ limitations under the License.
 package mgr
 
 import (
-	"fmt"
+	// "fmt"
 	"log"
-	"net"
+	// "net"
 	"time"
 
 	"k8s.io/api/core/v1"
@@ -30,7 +30,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/davidwalter0/go-mutex"
-	"github.com/davidwalter0/loadbalancer/helper"
+	// "github.com/davidwalter0/loadbalancer/helper"
 	"github.com/davidwalter0/loadbalancer/ipmgr"
 	"github.com/davidwalter0/loadbalancer/nodemgr"
 	"github.com/davidwalter0/loadbalancer/share"
@@ -92,6 +92,27 @@ func (mgr *Mgr) Get(Key string) (ml *ManagedListener, ok bool) {
 	return
 }
 
+// GetCreate returns  a listener by key
+func (mgr *Mgr) GetCreate(Key string, Service *v1.Service, mlp **ManagedListener, created *bool) (ml *ManagedListener) {
+	defer trace.Tracer.ScopedTrace()()
+	defer mgr.Mutex.MonitorTrace("Get")()
+	var ok bool
+	if ml, ok = mgr.Listeners[Key]; !ok {
+		ml = NewManagedListener(Service, mgr.EnvCfg, mgr.Clientset)
+		mgr.Listeners[Key] = ml
+		*created = true
+	}
+	*mlp = ml
+	return
+}
+
+// Get a listener by key
+func (mgr *Mgr) Set(Key string, ml *ManagedListener) {
+	defer trace.Tracer.ScopedTrace()()
+	defer mgr.Mutex.MonitorTrace("Set")()
+	mgr.Listeners[Key] = ml
+}
+
 // Run primary processing loop
 func (mgr *Mgr) Run() {
 	log.Println("LinkDefaultCIDR", ipmgr.DefaultCIDR)
@@ -125,6 +146,7 @@ func (mgr *Mgr) Close(Key string) {
 	}
 }
 
+/*
 // Open adds/update a pipe definition, creates Managed
 // Listeners, IPs for load balancers with specified external ports
 func (mgr *Mgr) Open(Service *v1.Service) {
@@ -166,20 +188,7 @@ func (mgr *Mgr) Open(Service *v1.Service) {
 		}
 	}
 }
-
-// Listen open listener on address
-func Listen(address string) (listener net.Listener) {
-	defer trace.Tracer.ScopedTrace()()
-	var err error
-	if false {
-		defer trace.Tracer.ScopedTrace(fmt.Sprintf("listener:%v err: %v", listener, err))()
-	}
-
-	if listener, err = net.Listen("tcp", address); err != nil {
-		log.Printf("net.Listen(\"tcp\", %s ) failed: %v\n", address, err)
-	}
-	return
-}
+*/
 
 // NodeWatch manage node workers list dynamically
 func (mgr *Mgr) NodeWatch() {
@@ -232,7 +241,7 @@ func (mgr *Mgr) ServiceWatch() {
 					}
 					switch Service.Spec.Type {
 					case v1.ServiceTypeLoadBalancer:
-						mgr.Open(Service)
+						go mgr.Listen(Service)
 					default:
 						mgr.Close(item.Key)
 					}
@@ -283,6 +292,7 @@ func (mgr *Mgr) EndpointWatch() {
 						log.Printf("EndpointWatcher Event %s for type %s\n", item.Key, item.EventType)
 						fallthrough
 					case watch.UPDATE:
+						log.Printf("EndpointWatcher Event %s for type %s\n", item.Key, item.EventType)
 						mgr.SetEndpoint(item.Key, ep)
 					case watch.DELETE:
 						log.Printf("EndpointWatcher Event %s for type %s\n", item.Key, item.EventType)

@@ -19,6 +19,8 @@ limitations under the License.
 package mgr
 
 import (
+	"time"
+
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
@@ -67,6 +69,7 @@ func NewManagedListener(Service *v1.Service,
 		Clientset:  Clientset,
 		Active:     0,
 		Service:    Service,
+		Create:     time.Now(),
 		Endpoints:  ep,
 		CIDR:       c,
 		// Port:       port,

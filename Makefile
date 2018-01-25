@@ -64,7 +64,9 @@ install: .dep/install
 	cp $(target) /go/bin/
 	touch $@
 
-.dep/image-$(DOCKER_USER)-$(IMAGE)-latest: .dep
+image: .dep/image-$(DOCKER_USER)-$(IMAGE)-latest .dep/tag-$(DOCKER_USER)-$(IMAGE)-${TAG}
+
+.dep/image-$(DOCKER_USER)-$(IMAGE)-latest: .dep $(target)
 	docker build --tag=$(DOCKER_USER)/$(IMAGE):latest .
 	touch $@ 
 
