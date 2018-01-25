@@ -66,7 +66,7 @@ func (mips *LoadBalancerIPs) AddAddr(IPNet, LinkDevice string) {
 					log.Printf("AddAddr %v %v LinkAddr: %v\n", IPNet, LinkDevice, *linkAddr)
 				}
 				if !_InTest_ {
-					if err := netlink.AddrAdd(link, addr); err == nil {
+					if err := netlink.AddrReplace(link, addr); err == nil {
 						(*mips)[IPNet] = linkAddr
 					} else {
 						if Debug {

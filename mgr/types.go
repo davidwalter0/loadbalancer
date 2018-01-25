@@ -64,6 +64,7 @@ type ManagedListener struct {
 	Service   *v1.Service
 	Endpoints *v1.Endpoints
 	Changed   bool
+	Create    time.Time
 	Port
 	IPs
 	Ports

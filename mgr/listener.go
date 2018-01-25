@@ -35,6 +35,8 @@ import (
 	"github.com/davidwalter0/loadbalancer/pipe"
 	"github.com/davidwalter0/loadbalancer/share"
 	"github.com/davidwalter0/loadbalancer/tracer"
+
+	"github.com/cenkalti/backoff"
 )
 
 // Monitor for this ManagedListener
@@ -68,6 +70,43 @@ func (ml *ManagedListener) SetService(Service *v1.Service) {
 	defer ml.Monitor()()
 	ml.Service = Service
 	ml.Changed = true
+}
+
+// UpdateEndpointsWithBackoff retry until endoints are found
+func (ml *ManagedListener) UpdateEndpointsWithBackoff() {
+	var ServicePrefix = "Service: " + ml.Key
+
+	Try := func() (err error) {
+		defer ml.Monitor()()
+		ml.UpdateEndpoints()
+		if !ml.canListen() {
+			err = fmt.Errorf("%s !canListen %v:%v",
+				ServicePrefix,
+				ml.IPs,
+				ml.Port,
+			)
+		}
+		return
+	}
+
+	ExpBackoff := ConfigureBackoff(5*time.Second, 1*time.Minute, 3*time.Minute)
+
+	Notify := func(err error, t time.Duration) {
+		log.Printf("%v started %s elapsed %s break after %s",
+			err,
+			ExpBackoff.StartTime().Format("15.04.999"),
+			DurationString(ExpBackoff.GetElapsedTime()),
+			DurationString(ExpBackoff.MaxElapsedTime))
+	}
+
+	var err error
+	for {
+		if err = backoff.RetryNotify(Try, ExpBackoff, Notify); err != nil {
+			log.Printf("%s accept retry timeout: %v\n", ServicePrefix, err)
+			continue
+		}
+		break
+	}
 }
 
 // UpdateEndpoints when in a cluster and processing asynchronous
@@ -182,36 +221,37 @@ func (ml *ManagedListener) canListen() (ok bool) {
 func (ml *ManagedListener) Listening() {
 	defer trace.Tracer.ScopedTrace()()
 	defer ml.StopWatchNotify()
-
+	var ServicePrefix = "Service: " + ml.Key
 	for {
 		if InCluster() {
-			ml.UpdateEndpoints()
-			for !ml.canListen() {
-				log.Println(fmt.Errorf("!canListen options not set\nport: %v\nips: %v\nports: %v\nservice: %v\nep: %v",
-					ml.Port,
-					ml.IPs,
-					ml.Ports,
-					ml.Service,
-					ml.Endpoints,
-				))
-				time.Sleep(time.Second)
-				ml.UpdateEndpoints()
-			}
+			ml.UpdateEndpointsWithBackoff()
 		}
+
 		var err error
 		var SourceConn, SinkConn net.Conn
 		if SourceConn, err = ml.Accept(); err != nil {
-			log.Printf("Downstream connection failed: %v\n", err)
-			break
+			select {
+			case <-shutdown:
+				log.Println("Listener shutting down...")
+				return
+			}
+			log.Printf("%s Downstream connection failed: %v\n", ServicePrefix, err)
+			continue
 		}
 		sink := ml.Next()
 		SinkConn, err = net.Dial("tcp", sink)
 		if err != nil {
-			log.Printf("Upstream connection failed: %v\n", err)
-			break
+			log.Printf("%s Upstream connection failed: %v\n", ServicePrefix, err)
+			continue
 		}
-		var pipe = pipe.NewPipe(ml.Key, ml.MapAdd, ml.MapRm, SourceConn, SinkConn, &ml.Definition)
-		go pipe.Connect()
+		select {
+		case <-shutdown:
+			log.Println("Listener shutting down...")
+			return
+		default:
+			var pipe = pipe.NewPipe(ml.Key, ml.MapAdd, ml.MapRm, SourceConn, SinkConn, &ml.Definition)
+			go pipe.Connect()
+		}
 	}
 }
 
