@@ -115,7 +115,7 @@ func (c *QueueController) Publish(event QueueItem) error {
 	key := event.Key
 	obj, _, err := c.Indexer.GetByKey(key)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s Fetching object with key %s from store failed with %v", log.Prefix(), key, err)
+		fmt.Fprintf(os.Stderr, "%s %s Get for %s %s store: %v", log.Prefix(), event.EventType, event.K8sAPIName, key, err)
 		return err
 	}
 

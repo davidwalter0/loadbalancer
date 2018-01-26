@@ -89,21 +89,20 @@ func (mgr *Mgr) Get(Key string) (ml *ManagedListener, ok bool) {
 	return
 }
 
-// GetCreate returns  a listener by key
-func (mgr *Mgr) GetCreate(Key string, Service *v1.Service, mlp **ManagedListener, created *bool) (ml *ManagedListener) {
+// GetCreate returns a listener by key
+func (mgr *Mgr) GetCreate(Key string, Service *v1.Service, created *bool) (ml *ManagedListener) {
 	defer trace.Tracer.ScopedTrace()()
-	defer mgr.Mutex.MonitorTrace("Get")()
+	defer mgr.Mutex.MonitorTrace("GetCreate")()
 	var ok bool
 	if ml, ok = mgr.Listeners[Key]; !ok {
 		ml = NewManagedListener(Service, mgr.EnvCfg, mgr.Clientset)
 		mgr.Listeners[Key] = ml
 		*created = true
 	}
-	*mlp = ml
 	return
 }
 
-// Get a listener by key
+// Set a listener by key
 func (mgr *Mgr) Set(Key string, ml *ManagedListener) {
 	defer trace.Tracer.ScopedTrace()()
 	defer mgr.Mutex.MonitorTrace("Set")()
