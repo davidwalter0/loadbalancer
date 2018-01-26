@@ -30,13 +30,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 
+	"github.com/davidwalter0/backoff"
 	"github.com/davidwalter0/loadbalancer/helper"
 	"github.com/davidwalter0/loadbalancer/ipmgr"
 	"github.com/davidwalter0/loadbalancer/pipe"
 	"github.com/davidwalter0/loadbalancer/share"
 	"github.com/davidwalter0/loadbalancer/tracer"
-
-	"github.com/cenkalti/backoff"
 )
 
 // Monitor for this ManagedListener
@@ -58,7 +57,7 @@ func (ml *ManagedListener) SetEndpoint(ep *v1.Endpoints) {
 			rhsPorts := EndpointIPs(ep)
 			rhsIPs := EndpointSubsetPorts(ep)
 			if !lhsPorts.Equal(rhsPorts) || !lhsIPs.Equal(rhsIPs) {
-				ml.Changed = true
+				ml.EndpointsChanged = true
 				ml.Endpoints = ep
 			}
 		}
@@ -69,12 +68,12 @@ func (ml *ManagedListener) SetEndpoint(ep *v1.Endpoints) {
 func (ml *ManagedListener) SetService(Service *v1.Service) {
 	defer ml.Monitor()()
 	ml.Service = Service
-	ml.Changed = true
+	ml.EndpointsChanged = true
 }
 
 // UpdateEndpointsWithBackoff retry until endoints are found
 func (ml *ManagedListener) UpdateEndpointsWithBackoff() {
-	var ServicePrefix = "Service: " + ml.Key
+	var ServicePrefix = fmt.Sprintf("Service %-32.32s", ml.Key)
 
 	Try := func() (err error) {
 		defer ml.Monitor()()
@@ -89,7 +88,7 @@ func (ml *ManagedListener) UpdateEndpointsWithBackoff() {
 		return
 	}
 
-	ExpBackoff := ConfigureBackoff(5*time.Second, 1*time.Minute, 3*time.Minute)
+	ExpBackoff := ConfigureBackoff(5*time.Second, 1*time.Minute, 3*time.Minute, ml.Canceled)
 
 	Notify := func(err error, t time.Duration) {
 		log.Printf("%v started %s elapsed %s break after %s",
@@ -115,9 +114,9 @@ func (ml *ManagedListener) UpdateEndpoints() {
 	if InCluster() {
 		if ml.Endpoints == nil {
 			ml.Endpoints = Endpoints(ml.Clientset, ml.Service)
-			ml.Changed = true
+			ml.EndpointsChanged = true
 		}
-		if ml.Changed || !ml.canListen() {
+		if ml.EndpointsChanged || !ml.canListen() {
 			ml.IPs = EndpointIPs(ml.Endpoints)
 			ml.Ports = EndpointSubsetPorts(ml.Endpoints)
 			if len(ml.Ports) > 0 {
@@ -125,7 +124,7 @@ func (ml *ManagedListener) UpdateEndpoints() {
 			} else {
 				log.Println(fmt.Errorf("%s", "No port endpoints available"))
 			}
-			ml.Changed = false
+			ml.EndpointsChanged = false
 		}
 	}
 }
@@ -195,7 +194,7 @@ func (ml *ManagedListener) Next() (sink string) {
 				sink = Address(ml.IPs[n], ml.Port)
 			}
 		}
-		log.Printf("Key %s %s <-> upstream %s:%d\n", ml.Key, ml.Source, sink, ml.Port)
+		log.Printf("Service %-32.32s %s ~ %s:%d\n", ml.Key, ml.Source, sink, ml.Port)
 	}
 	return
 }
@@ -203,7 +202,10 @@ func (ml *ManagedListener) Next() (sink string) {
 // Accept expose ManagedListener's listener
 func (ml *ManagedListener) Accept() (net.Conn, error) {
 	defer trace.Tracer.ScopedTrace()()
-	return ml.Listener.Accept()
+	if ml != nil && ml.Listener != nil {
+		return ml.Listener.Accept()
+	}
+	return nil, fmt.Errorf("Accept called on nil Managed Listener")
 }
 
 // StopWatchNotify checking for endpoints
@@ -221,7 +223,13 @@ func (ml *ManagedListener) canListen() (ok bool) {
 func (ml *ManagedListener) Listening() {
 	defer trace.Tracer.ScopedTrace()()
 	defer ml.StopWatchNotify()
-	var ServicePrefix = "Service: " + ml.Key
+	var ServicePrefix = fmt.Sprintf("Service %-32.32s", ml.Key)
+	if ml.Canceled == nil {
+		log.Println("Listener Canceled chan is nil returning...")
+		return
+	}
+	canceled := ml.Canceled
+
 	for {
 		if InCluster() {
 			ml.UpdateEndpointsWithBackoff()
@@ -230,12 +238,16 @@ func (ml *ManagedListener) Listening() {
 		var err error
 		var SourceConn, SinkConn net.Conn
 		if SourceConn, err = ml.Accept(); err != nil {
+			log.Printf("%s Downstream connection failed: %v\n", ServicePrefix, err)
 			select {
+			case <-canceled:
+				log.Println("Canceled Listener shutting down...")
+				return
 			case <-shutdown:
 				log.Println("Listener shutting down...")
 				return
+			default:
 			}
-			log.Printf("%s Downstream connection failed: %v\n", ServicePrefix, err)
 			continue
 		}
 		sink := ml.Next()
@@ -245,6 +257,9 @@ func (ml *ManagedListener) Listening() {
 			continue
 		}
 		select {
+		case <-canceled:
+			log.Println("Canceled Listener shutting down...")
+			return
 		case <-shutdown:
 			log.Println("Listener shutting down...")
 			return
@@ -260,6 +275,10 @@ func (ml *ManagedListener) Close() {
 	if ml != nil {
 		defer trace.Tracer.ScopedTrace()()
 		defer ml.Monitor()()
+		if ml.Canceled != nil {
+			close(ml.Canceled)
+			ml.Canceled = make(chan struct{})
+		}
 		if ml.Listener != nil {
 			if err := ml.Listener.Close(); err != nil {
 				log.Println("Error closing listener", ml.Listener)

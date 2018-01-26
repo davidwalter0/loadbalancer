@@ -1,16 +1,16 @@
 package mgr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"time"
 
 	"k8s.io/api/core/v1"
 
+	"github.com/davidwalter0/backoff"
 	"github.com/davidwalter0/loadbalancer/helper"
 	"github.com/davidwalter0/loadbalancer/pipe"
-
-	"github.com/cenkalti/backoff"
 )
 
 // Listen creates a listener and retries until the listener works with
@@ -19,10 +19,10 @@ func (mgr *Mgr) Listen(Service *v1.Service) {
 
 	var serviceKey = helper.ServiceKey(Service)
 	var managedListener *ManagedListener
-	var ServicePrefix = "Service: " + serviceKey
+	var ServicePrefix = fmt.Sprintf("Service %-32.32s", serviceKey)
 	var created bool
 
-	mgr.GetCreate(serviceKey, Service, &managedListener, &created)
+	managedListener = mgr.GetCreate(serviceKey, Service, &created)
 	if !created && time.Now().Sub(managedListener.Create) < 5*time.Second {
 		log.Printf("%s skip listener create", ServicePrefix)
 		return
@@ -31,10 +31,11 @@ func (mgr *Mgr) Listen(Service *v1.Service) {
 	var rhs *pipe.Definition = &managedListener.Definition
 
 	if !created && lhs.Equal(rhs) {
-		log.Println(serviceKey, "Skip creating", lhs.Equal(rhs))
-		log.Println(serviceKey, "equal", lhs.Equal(rhs))
-		log.Println(serviceKey, "lhs", lhs)
-		log.Println(serviceKey, "rhs", rhs)
+		equal := lhs.Equal(rhs)
+		log.Println(ServicePrefix, "Skip creating", equal)
+		log.Println(ServicePrefix, "equal", equal)
+		log.Println(ServicePrefix, "lhs", lhs)
+		log.Println(ServicePrefix, "rhs", rhs)
 		return
 	}
 
@@ -52,20 +53,26 @@ func (mgr *Mgr) Listen(Service *v1.Service) {
 			managedListener.CIDR.LinkDevice)
 
 		managedListener.Listener = Listen(serviceKey,
-			helper.ServiceSource(Service))
+			helper.ServiceSource(Service), managedListener.Canceled)
 
-		managedListener.Open()
+		if managedListener.Listener != nil {
+			managedListener.Open()
 
-		log.Printf("%s listener created %v",
-			ServicePrefix, managedListener.Listener.Addr())
+			log.Printf("%s listener created %v",
+				ServicePrefix, managedListener.Listener.Addr())
+		} else {
+			log.Printf("%s listener create failed", ServicePrefix)
+		}
 	}
 
 }
 
 // Listen open listener on address
-func Listen(serviceKey, address string) (listener net.Listener) {
+func Listen(
+	serviceKey, address string, cancel chan struct{}) (
+	listener net.Listener) {
 
-	var ServicePrefix = "Service: " + serviceKey
+	var ServicePrefix = fmt.Sprintf("Service %-32.32s", serviceKey)
 	var err error
 
 	Try := func() (err error) {
@@ -73,7 +80,8 @@ func Listen(serviceKey, address string) (listener net.Listener) {
 		return
 	}
 
-	ExpBackoff := ConfigureBackoff(10*time.Second, 1*time.Minute, 3*time.Minute)
+	ExpBackoff := ConfigureBackoff(
+		10*time.Second, 1*time.Minute, 3*time.Minute, cancel)
 
 	Notify := func(err error, t time.Duration) {
 		log.Printf("%v started %s elapsed %s break after %s",
@@ -82,14 +90,17 @@ func Listen(serviceKey, address string) (listener net.Listener) {
 			DurationString(ExpBackoff.GetElapsedTime()),
 			DurationString(ExpBackoff.MaxElapsedTime))
 	}
-
 	for {
-		if err = backoff.RetryNotify(Try, ExpBackoff, Notify); err != nil {
-			log.Printf("%s Listen retry timeout: %v, %v", ServicePrefix, err, listener)
-		} else {
-			log.Printf("%s listener created %v %v", ServicePrefix, err, listener)
-			break
+		select {
+		case <-cancel:
+			log.Printf("%s Listen retry canceled by cancel", ServicePrefix)
+		default:
+			if err = backoff.RetryNotify(Try, ExpBackoff, Notify); err != nil {
+				log.Printf("%s Listen retry timeout: %v, %v", ServicePrefix, err, listener)
+			} else {
+				log.Printf("%s listener created %v %v", ServicePrefix, err, listener)
+				return
+			}
 		}
 	}
-	return
 }

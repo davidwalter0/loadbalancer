@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cenkalti/backoff"
+	"github.com/davidwalter0/backoff"
 )
 
 // HMSN hours, minutes, seconds, nanoseconds
@@ -19,8 +19,8 @@ func DurationString(d time.Duration) string {
 }
 
 // ConfigureBackoff using some normal steps
-func ConfigureBackoff(step, maxStep, maxElapsedTime time.Duration) *backoff.ExponentialBackOff {
-	b := backoff.NewExponentialBackOff()
+func ConfigureBackoff(step, maxStep, maxElapsedTime time.Duration, cancel chan struct{}) *backoff.ExponentialBackOff {
+	b := backoff.NewExponentialBackOff(cancel)
 	b.InitialInterval = step          //  1 * time.second
 	b.MaxInterval = maxStep           //  5 * time.Minute
 	b.MaxElapsedTime = maxElapsedTime // 15 * time.Minute

@@ -10,6 +10,12 @@
 			"revisionTime": "2017-07-05T02:17:15Z"
 		},
 		{
+			"checksumSHA1": "6Ga6TPdtObtM+3w7yM9orkZ71V0=",
+			"path": "github.com/davidwalter0/backoff",
+			"revision": "26e31ff965b22a245781e555e4393caa6136945a",
+			"revisionTime": "2018-01-27T06:38:06Z"
+		},
+		{
 			"checksumSHA1": "hS4fSOGJGVcX7+6DQ16dCXmoJVc=",
 			"path": "github.com/davidwalter0/go-cfg",
 			"revision": "305c53027475d5d1ee3a29a881540ca13f4d8290",
