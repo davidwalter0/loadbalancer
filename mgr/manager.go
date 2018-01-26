@@ -20,9 +20,7 @@ limitations under the License.
 package mgr
 
 import (
-	// "fmt"
 	"log"
-	// "net"
 	"time"
 
 	"k8s.io/api/core/v1"
@@ -30,7 +28,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/davidwalter0/go-mutex"
-	// "github.com/davidwalter0/loadbalancer/helper"
 	"github.com/davidwalter0/loadbalancer/ipmgr"
 	"github.com/davidwalter0/loadbalancer/nodemgr"
 	"github.com/davidwalter0/loadbalancer/share"
@@ -145,50 +142,6 @@ func (mgr *Mgr) Close(Key string) {
 		delete(mgr.Listeners, Key)
 	}
 }
-
-/*
-// Open adds/update a pipe definition, creates Managed
-// Listeners, IPs for load balancers with specified external ports
-func (mgr *Mgr) Open(Service *v1.Service) {
-	defer mgr.Mutex.MonitorTrace("Open")()
-	defer trace.Tracer.ScopedTrace()()
-	var Key = helper.ServiceKey(Service)
-
-	if current, ok := mgr.Listeners[Key]; !ok {
-		managedListener := NewManagedListener(Service, mgr.EnvCfg, mgr.Clientset)
-		managedLBIPs.RemoveAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
-		managedLBIPs.AddAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
-		managedListener.Listener = Listen(helper.ServiceSource(Service))
-		if managedListener.Listener == nil {
-			log.Printf("Listen failed for %s service on %v tearing down\n", Key, managedListener.CIDR.String())
-			managedLBIPs.RemoveAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
-			delete(mgr.Listeners, Key)
-			return
-		}
-		mgr.Listeners[Key] = managedListener
-		mgr.Listeners[Key].Open()
-	} else {
-		managedListener := NewManagedListener(Service, mgr.EnvCfg, mgr.Clientset)
-		if !managedListener.Equal(current) {
-			if managedListener.Service.Spec.LoadBalancerIP != current.Service.Spec.LoadBalancerIP {
-				mgr.Listeners[Key].Close()
-				// managedLBIPs.RemoveAddr(current.CIDR.String(), current.CIDR.LinkDevice)
-				managedLBIPs.RemoveAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
-				managedLBIPs.AddAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
-				managedListener.Listener = Listen(helper.ServiceSource(Service))
-				if managedListener.Listener == nil {
-					log.Printf("Listen failed for %s service on %v tearing down\n", Key, managedListener.CIDR.String())
-					managedLBIPs.RemoveAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
-					delete(mgr.Listeners, Key)
-					return
-				}
-				mgr.Listeners[Key] = managedListener
-				mgr.Listeners[Key].Open()
-			}
-		}
-	}
-}
-*/
 
 // NodeWatch manage node workers list dynamically
 func (mgr *Mgr) NodeWatch() {

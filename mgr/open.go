@@ -1,7 +1,6 @@
 package mgr
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"time"
@@ -9,6 +8,7 @@ import (
 	"k8s.io/api/core/v1"
 
 	"github.com/davidwalter0/loadbalancer/helper"
+	"github.com/davidwalter0/loadbalancer/pipe"
 
 	"github.com/cenkalti/backoff"
 )
@@ -27,17 +27,37 @@ func (mgr *Mgr) Listen(Service *v1.Service) {
 		log.Printf("%s skip listener create", ServicePrefix)
 		return
 	}
+	var lhs *pipe.Definition = NewPipeDefinition(Service, mgr.EnvCfg)
+	var rhs *pipe.Definition = &managedListener.Definition
 
-	var create = created || Service.Spec.LoadBalancerIP != managedListener.Service.Spec.LoadBalancerIP
+	if !created && lhs.Equal(rhs) {
+		log.Println(serviceKey, "Skip creating", lhs.Equal(rhs))
+		log.Println(serviceKey, "equal", lhs.Equal(rhs))
+		log.Println(serviceKey, "lhs", lhs)
+		log.Println(serviceKey, "rhs", rhs)
+		return
+	}
+
+	var create = created ||
+		Service.Spec.LoadBalancerIP != managedListener.Service.Spec.LoadBalancerIP
 
 	if create {
 		log.Printf("%s listener create start", ServicePrefix)
 		managedListener.Close()
-		managedLBIPs.RemoveAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
-		managedLBIPs.AddAddr(managedListener.CIDR.String(), managedListener.CIDR.LinkDevice)
-		managedListener.Listener = Listen(serviceKey, helper.ServiceSource(Service))
-		go managedListener.Open()
-		log.Printf("%s listener created %v", ServicePrefix, managedListener.Listener.Addr())
+
+		managedLBIPs.RemoveAddr(managedListener.CIDR.String(),
+			managedListener.CIDR.LinkDevice)
+
+		managedLBIPs.AddAddr(managedListener.CIDR.String(),
+			managedListener.CIDR.LinkDevice)
+
+		managedListener.Listener = Listen(serviceKey,
+			helper.ServiceSource(Service))
+
+		managedListener.Open()
+
+		log.Printf("%s listener created %v",
+			ServicePrefix, managedListener.Listener.Addr())
 	}
 
 }
@@ -49,14 +69,7 @@ func Listen(serviceKey, address string) (listener net.Listener) {
 	var err error
 
 	Try := func() (err error) {
-		if listener, err = net.Listen("tcp", address); err != nil {
-			err = fmt.Errorf("%s net.Listen(tcp, %s) %v %v",
-				ServicePrefix,
-				address,
-				err,
-				listener,
-			)
-		}
+		listener, err = net.Listen("tcp", address)
 		return
 	}
 
