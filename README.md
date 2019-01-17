@@ -1,5 +1,7 @@
 Little load balancer
 
+![](https://img.shields.io/github/tag/davidwalter0/loadbalancer.svg?colorB=forestgreen&label=latest&logo=version&logoColor=forestgreen)
+
 ---
 ### Load Balancing
 
