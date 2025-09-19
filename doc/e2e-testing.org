@@ -1,0 +1,314 @@
+#+TITLE: End-to-End Testing Framework
+#+AUTHOR: Claude
+#+DATE: [2025-09-11]
+
+* Overview
+
+The loadbalancer project includes a comprehensive end-to-end (E2E) testing framework that verifies the functionality of the loadbalancer in a real Kubernetes environment. This document describes how to use and extend the E2E testing framework.
+
+* Test Architecture
+
+The E2E testing framework is designed with the following components:
+
+** Framework Core (~test/e2e/framework/~)
+- Manages test environment setup and teardown
+- Provides utilities for interacting with Kubernetes resources
+- Handles loadbalancer process management
+- Implements common test operations
+
+** Test Scenarios (~test/e2e/scenarios/~)
+- Implements specific test cases
+- Validates different aspects of loadbalancer functionality
+- Each scenario is independent and self-contained
+
+** Utility Functions (~test/e2e/utils/~)
+- HTTP client for testing web services
+- Network utilities for testing connectivity
+- Helper functions for common operations
+
+** Test Runner (~test/e2e/e2e_test.go~)
+- Coordinates test execution
+- Handles command-line flags and configuration
+- Manages test lifecycle
+
+* Running E2E Tests
+
+** Prerequisites
+
+- A running Kubernetes cluster (local or remote)
+- ~kubectl~ configured to access the cluster
+- Network access to the Kubernetes API server
+- Permissions to create and manage resources in the cluster
+- Built loadbalancer binary
+
+** Basic Usage
+
+To run all E2E tests:
+
+#+begin_src bash
+cd /path/to/loadbalancer
+go test ./test/e2e -v
+#+end_src
+
+** Configuration Options
+
+The E2E tests can be configured with the following command-line flags:
+
+| Flag              | Description                                        | Default                      |
+|-------------------+----------------------------------------------------+------------------------------|
+| ~--kubeconfig~    | Path to kubeconfig file                            | ~/.kube/config              |
+| ~--namespace~     | Namespace to use for tests                         | auto-generated               |
+| ~--iface~         | Network interface to use for tests                 | eth0                         |
+| ~--lb-binary~     | Path to loadbalancer binary                        | auto-detected                |
+| ~--test-filter~   | Filter for test names to run (comma-separated)     | empty (run all)              |
+| ~--cleanup-on-fail~ | Clean up resources even when tests fail           | true                         |
+| ~--cluster-tests~ | Run tests that require a Kubernetes cluster        | true                         |
+
+Example with configuration options:
+
+#+begin_src bash
+go test ./test/e2e -v \
+  --kubeconfig=/path/to/kubeconfig \
+  --namespace=lb-e2e-test \
+  --iface=ens4 \
+  --lb-binary=./bin/loadbalancer \
+  --test-filter=BasicConnectivity,HealthCheck
+#+end_src
+
+** Environment Variables
+
+You can also use environment variables to configure the tests:
+
+| Environment Variable   | Equivalent Flag         |
+|------------------------+-------------------------|
+| ~KUBECONFIG~           | ~--kubeconfig~          |
+| ~E2E_NAMESPACE~        | ~--namespace~           |
+| ~E2E_NETWORK_IFACE~    | ~--iface~               |
+| ~LOADBALANCER_BINARY~  | ~--lb-binary~           |
+| ~E2E_TEST_FILTER~      | ~--test-filter~         |
+| ~E2E_CLEANUP_ON_FAIL~  | ~--cleanup-on-fail~     |
+| ~E2E_CLUSTER_TESTS~    | ~--cluster-tests~       |
+
+Example with environment variables:
+
+#+begin_src bash
+export KUBECONFIG=/path/to/kubeconfig
+export E2E_NAMESPACE=lb-e2e-test
+export E2E_NETWORK_IFACE=ens4
+export LOADBALANCER_BINARY=./bin/loadbalancer
+export E2E_TEST_FILTER=BasicConnectivity,HealthCheck
+go test ./test/e2e -v
+#+end_src
+
+* Available Test Scenarios
+
+The E2E testing framework includes the following test scenarios:
+
+** BasicConnectivity
+Verifies that the loadbalancer can forward traffic to a backend service.
+- Creates a simple service and backend pod
+- Waits for the service to get an external IP
+- Verifies connectivity to the service
+
+** MultipleServices
+Verifies that the loadbalancer can handle multiple services simultaneously.
+- Creates multiple services and backend pods
+- Verifies connectivity to all services
+- Performs load testing on all services simultaneously
+
+** ServiceUpdates
+Verifies that the loadbalancer handles service updates correctly.
+- Creates a service and backend pod
+- Updates service properties
+- Verifies the loadbalancer adapts to the changes
+
+** EndpointChanges
+Verifies that the loadbalancer handles endpoint changes correctly.
+- Creates a service with one backend pod
+- Adds additional backend pods
+- Removes backend pods
+- Changes service selectors
+- Verifies the loadbalancer adapts to all changes
+
+** HealthCheck
+Verifies the loadbalancer's health check functionality.
+- Creates healthy and unhealthy backend pods
+- Verifies traffic is only routed to healthy pods
+- Tests recovery when pods transition between healthy and unhealthy states
+
+** LoadBalancing
+Verifies the load distribution across multiple backends.
+- Creates multiple backend pods with unique identifiers
+- Sends traffic to the service
+- Analyzes the distribution of requests across backends
+- Verifies the load is reasonably balanced
+
+** ShutdownAndRestart
+Verifies that the loadbalancer can be shutdown and restarted without issues.
+- Creates a service and verifies connectivity
+- Stops the loadbalancer
+- Verifies the service is no longer accessible
+- Restarts the loadbalancer
+- Verifies connectivity is restored
+
+** HighAvailabilityConfiguration
+Verifies the loadbalancer's high availability features.
+- Tests failover scenarios
+- Verifies configuration persistence
+- Tests recovery from network partitions
+
+* Writing New Test Scenarios
+
+To add a new test scenario, follow these steps:
+
+1. Create a new file in ~test/e2e/scenarios/~ with a descriptive name (e.g., ~my_feature_test.go~)
+2. Implement a test function with the signature: ~func TestMyFeature(t *testing.T, f *framework.Framework)~
+3. Add your test function to the map in ~test/e2e/scenarios/tests.go~
+
+Example:
+
+#+begin_src go
+package scenarios
+
+import (
+	"testing"
+	"github.com/davidwalter0/loadbalancer/test/e2e/framework"
+)
+
+// TestMyFeature verifies my new feature
+func TestMyFeature(t *testing.T, f *framework.Framework) {
+	// Start the loadbalancer
+	if err := f.StartLoadBalancer(); err != nil {
+		t.Fatalf("Failed to start loadbalancer: %v", err)
+	}
+
+	// Implement your test logic here
+	// ...
+
+	// Use framework utilities to create and manage resources
+	// ...
+
+	// Verify expected behavior
+	// ...
+}
+#+end_src
+
+Then add your test to the map in ~tests.go~:
+
+#+begin_src go
+func GetTests() map[string]TestFunc {
+	return map[string]TestFunc{
+		// ... existing tests ...
+		"MyFeature": TestMyFeature,
+	}
+}
+#+end_src
+
+* Test Framework Utilities
+
+The E2E framework provides several utilities to simplify test implementation:
+
+** Kubernetes Resource Management
+
+- ~f.CreateNamespace()~ - Creates a test namespace
+- ~f.DeleteNamespace()~ - Deletes a test namespace
+- ~f.CreateTestPod()~ - Creates a test pod with a simple web server
+- ~f.DeletePod()~ - Deletes a pod
+- ~f.WaitForPodReady()~ - Waits for a pod to be ready
+- ~f.CreateLoadBalancerService()~ - Creates a LoadBalancer service
+- ~f.DeleteService()~ - Deletes a service
+- ~f.WaitForServiceExternalIP()~ - Waits for a service to get an external IP
+
+** Loadbalancer Management
+
+- ~f.StartLoadBalancer()~ - Starts the loadbalancer process
+- ~f.StopLoadBalancer()~ - Stops the loadbalancer process
+- ~f.RunWithTimeout()~ - Runs a function with a timeout
+- ~f.WaitForCondition()~ - Waits for a condition to be true
+
+** HTTP Testing
+
+- ~utils.NewHTTPClient()~ - Creates an HTTP client with timeouts
+- ~client.Get()~ - Performs an HTTP GET request
+- ~client.WaitForHTTPStatus()~ - Waits for an HTTP endpoint to return a specific status
+- ~client.WaitForHTTPContent()~ - Waits for an HTTP endpoint to return specific content
+
+** Network Testing
+
+- ~utils.IsPortOpen()~ - Checks if a port is open
+- ~utils.WaitForPortOpen()~ - Waits for a port to be open
+- ~utils.WaitForPortClosed()~ - Waits for a port to be closed
+- ~utils.GetAvailablePort()~ - Finds an available port on the local system
+
+* Test Cleanup
+
+The framework automatically cleans up all resources created during tests, even if tests fail (unless ~--cleanup-on-fail=false~ is specified). 
+
+To add custom cleanup operations, use the ~f.AddCleanupFunc()~ method:
+
+#+begin_src go
+f.AddCleanupFunc(func() error {
+	// Custom cleanup logic
+	return nil
+})
+#+end_src
+
+Cleanup functions are executed in reverse order during teardown.
+
+* Debugging Failed Tests
+
+When a test fails, you can:
+
+1. Run the test with ~--cleanup-on-fail=false~ to preserve the test environment
+2. Examine the Kubernetes resources created by the test
+3. Check the loadbalancer logs
+4. Use ~kubectl~ to interact with the test namespace
+5. Run the test with higher verbosity: ~go test ./test/e2e -v --test-filter=FailingTest~
+
+* Integration with CI/CD
+
+To integrate the E2E tests with a CI/CD pipeline:
+
+1. Build the loadbalancer binary
+2. Set up a Kubernetes cluster (or use an existing one)
+3. Run the E2E tests with appropriate configuration
+4. Use the test exit code to determine success or failure
+
+Example CI/CD workflow:
+
+#+begin_src bash
+#!/bin/bash
+set -e
+
+# Build the loadbalancer
+go build -o bin/loadbalancer
+
+# Run E2E tests
+export LOADBALANCER_BINARY=$(pwd)/bin/loadbalancer
+go test ./test/e2e -v
+
+# If we get here, tests passed
+echo "E2E tests passed!"
+#+end_src
+
+* Troubleshooting Common Issues
+
+** Tests fail to create resources
+- Verify your kubeconfig is correct
+- Ensure you have necessary permissions in the cluster
+- Check if the namespace already exists and can't be created
+
+** Loadbalancer fails to start
+- Ensure the loadbalancer binary is built correctly
+- Check if the network interface specified exists
+- Verify no other process is using the same ports
+
+** Tests timeout waiting for external IP
+- Verify your cluster supports LoadBalancer services
+- Check if you have a cloud provider or MetalLB configured
+- Inspect the service status for any error conditions
+
+** Health check tests fail
+- Increase the timeout values if your environment is slow
+- Verify the health check settings in service annotations
+- Check if network policies might be blocking health check requests

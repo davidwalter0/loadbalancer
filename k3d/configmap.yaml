@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loadbalancer-config
+  namespace: kube-system
+data:
+  # Network interface configuration can be adjusted here
+  # or set via environment variables in the DaemonSet
+  linkdevice: "" # Auto-detect if empty
+  debug: "true"
+  kubernetes: "true"
+  
+  # Configuration for loadbalancer IP range (optional)
+  # If not set, it will use the subnet of the linkdevice
+  # cidr: "192.168.1.0/24"

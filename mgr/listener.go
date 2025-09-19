@@ -19,6 +19,7 @@ limitations under the License.
 package mgr
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -91,9 +92,8 @@ func (ml *ManagedListener) UpdateEndpointsWithBackoff() {
 	ExpBackoff := ConfigureBackoff(5*time.Second, 1*time.Minute, 3*time.Minute, ml.Canceled)
 
 	Notify := func(err error, t time.Duration) {
-		log.Printf("%v started %s elapsed %s break after %s",
+		log.Printf("%v elapsed %s break after %s",
 			err,
-			ExpBackoff.StartTime().Format("15.04.999"),
 			DurationString(ExpBackoff.GetElapsedTime()),
 			DurationString(ExpBackoff.MaxElapsedTime))
 	}
@@ -117,6 +117,9 @@ func (ml *ManagedListener) UpdateEndpoints() {
 			ml.EndpointsChanged = true
 		}
 		if ml.EndpointsChanged || !ml.canListen() {
+			// Save old IPs for health checker updates
+			oldIPs := ml.IPs
+			
 			ml.IPs = EndpointIPs(ml.Endpoints)
 			ml.Ports = EndpointSubsetPorts(ml.Endpoints)
 			if len(ml.Ports) > 0 {
@@ -124,6 +127,26 @@ func (ml *ManagedListener) UpdateEndpoints() {
 			} else {
 				log.Println(fmt.Errorf("%s", "No port endpoints available"))
 			}
+			
+			// Update health checker if enabled
+			if ml.HealthChecker != nil && ml.HealthChecker.IsEnabled() && len(ml.Ports) > 0 {
+				// Remove old endpoints
+				for _, ip := range oldIPs {
+					address := Address(ip, ml.Port)
+					ml.HealthChecker.RemoveEndpoint(address)
+				}
+				
+				// Add new endpoints
+				for _, ip := range ml.IPs {
+					address := Address(ip, ml.Port)
+					ml.HealthChecker.AddEndpoint(address)
+				}
+				
+				if ml.Debug {
+					log.Printf("Updated health check endpoints for service %s: %v", ml.Key, ml.IPs)
+				}
+			}
+			
 			ml.EndpointsChanged = false
 		}
 	}
@@ -172,6 +195,22 @@ func (ml *ManagedListener) Open() {
 		go ml.Listening()
 		go ml.PipeMapHandler()
 		ml.SetExternalIP()
+		
+		// Start health checks if enabled
+		if ml.HealthChecker != nil && ml.HealthChecker.IsEnabled() {
+			// Add all endpoints to health checker
+			for _, ip := range ml.IPs {
+				if len(ml.Ports) > 0 {
+					address := Address(ip, ml.Port)
+					ml.HealthChecker.AddEndpoint(address)
+				}
+			}
+			
+			// Start the health checker
+			ml.HealthChecker.Debug = ml.Debug
+			ml.HealthChecker.StartChecking()
+			log.Printf("Health checking started for service %s with %d endpoints", ml.Key, len(ml.IPs))
+		}
 	}
 }
 
@@ -189,9 +228,36 @@ func (ml *ManagedListener) Next() (sink string) {
 			n = atomic.AddUint64(&ml.n, 1) % uint64(len(sinks))
 			sink = sinks[n]
 		} else {
-			n = atomic.AddUint64(&ml.n, 1) % uint64(len(ml.IPs))
-			if len(ml.Ports) > 0 {
-				sink = Address(ml.IPs[n], ml.Port)
+			// Use health checker if enabled to select only healthy endpoints
+			if ml.HealthChecker != nil && ml.HealthChecker.IsEnabled() && len(ml.Ports) > 0 {
+				// Get only healthy endpoints
+				healthyAddresses := ml.HealthChecker.GetHealthyEndpoints()
+				
+				// If no healthy endpoints, fall back to all endpoints
+				if len(healthyAddresses) == 0 {
+					if ml.Debug {
+						log.Printf("Warning: No healthy endpoints for service %s, using all available endpoints", ml.Key)
+					}
+					n = atomic.AddUint64(&ml.n, 1) % uint64(len(ml.IPs))
+					if len(ml.Ports) > 0 {
+						sink = Address(ml.IPs[n], ml.Port)
+					}
+				} else {
+					// Select from healthy endpoints
+					n = atomic.AddUint64(&ml.n, 1) % uint64(len(healthyAddresses))
+					sink = healthyAddresses[n]
+					
+					if ml.Debug {
+						log.Printf("Selected healthy endpoint %s from %d available for service %s", 
+							sink, len(healthyAddresses), ml.Key)
+					}
+				}
+			} else {
+				// Standard round-robin selection without health checks
+				n = atomic.AddUint64(&ml.n, 1) % uint64(len(ml.IPs))
+				if len(ml.Ports) > 0 {
+					sink = Address(ml.IPs[n], ml.Port)
+				}
 			}
 		}
 		log.Printf("Service %-32.32s %s ~ %s:%d\n", ml.Key, ml.Source, sink, ml.Port)
@@ -275,8 +341,26 @@ func (ml *ManagedListener) Close() {
 	if ml != nil {
 		defer trace.Tracer.ScopedTrace()()
 		defer ml.Monitor()()
+		
+		// Stop health checker if enabled
+		if ml.HealthChecker != nil && ml.HealthChecker.IsEnabled() {
+			ml.HealthChecker.StopChecking()
+			log.Printf("Health checking stopped for service %s", ml.Key)
+		}
+		
 		if ml.Canceled != nil {
-			close(ml.Canceled)
+			// Add a recover to handle already closed channel
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// Channel was already closed, just log and continue
+						log.Printf("Warning: Canceled channel was already closed for service %s: %v", ml.Key, r)
+					}
+				}()
+
+				close(ml.Canceled)
+			}()
+
 			ml.Canceled = make(chan struct{})
 		}
 		if ml.Listener != nil {
@@ -309,14 +393,14 @@ func (ml *ManagedListener) SetExternalIP() {
 	}
 	ml.Service.Spec.ExternalIPs = []string{ip}
 	log.Println("SetExternalIP", ml.Service.Spec.ExternalIPs)
-	if _, err := client.Update(ml.Service); err != nil {
+	if _, err := client.Update(context.Background(), ml.Service, metav1.UpdateOptions{}); err != nil {
 		log.Println("Problem with client update:", err)
 	}
 	ml.refreshServiceSpec(client)
 }
 
 func (ml *ManagedListener) refreshServiceSpec(client v1core.ServiceInterface) {
-	service, err := client.Get(ml.Service.ObjectMeta.Name, metav1.GetOptions{})
+	service, err := client.Get(context.Background(), ml.Service.ObjectMeta.Name, metav1.GetOptions{})
 	if err == nil {
 		ml.Service = service
 	}
@@ -332,7 +416,7 @@ func (ml *ManagedListener) RemoveExternalIP() {
 	ml.refreshServiceSpec(client)
 	ml.Service.Spec.ExternalIPs = []string{}
 	// ml.Service.ObjectMeta.Annotations = make(map[string]string)
-	_, err := client.Update(ml.Service)
+	_, err := client.Update(context.Background(), ml.Service, metav1.UpdateOptions{})
 	if err != nil {
 		log.Println("Error Removing ExternalIPs", err)
 		if ml.Debug {
@@ -344,7 +428,7 @@ func (ml *ManagedListener) RemoveExternalIP() {
 		time.Sleep(time.Second)
 		ml.refreshServiceSpec(client)
 		ml.Service.Spec.ExternalIPs = []string{}
-		_, err = client.Update(ml.Service)
+		_, err = client.Update(context.Background(), ml.Service, metav1.UpdateOptions{})
 
 	}
 }

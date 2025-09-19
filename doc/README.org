@@ -1,0 +1,212 @@
+#+TITLE: Kubernetes External LoadBalancer
+#+AUTHOR: Claude
+#+DATE: [2025-09-11]
+
+A Kubernetes-native network proxy designed to provide external connectivity to Kubernetes services of type LoadBalancer.
+
+* Overview
+
+This project implements an external LoadBalancer for Kubernetes that:
+
+1. Watches for Kubernetes Service objects with =type: LoadBalancer=
+2. Assigns and manages external IP addresses on network interfaces
+3. Creates TCP listeners for each service
+4. Forwards traffic to service endpoints using round-robin load balancing
+5. Updates the =externalIPs= field in Kubernetes Service objects
+
+* Architecture
+
+** System Components
+
+The system consists of several key components:
+
+*** Manager (Mgr)
+- Central controller that watches Kubernetes resources
+- Creates and manages listeners for each LoadBalancer service
+- Coordinates shutdown and cleanup
+
+*** ManagedListener
+- Handles a single LoadBalancer service
+- Creates and manages network listeners
+- Forwards connections to service endpoints
+- Updates external IPs on service objects
+
+*** Pipe
+- Represents a bidirectional connection between client and service
+- Handles data forwarding between connections
+- Manages connection lifecycle
+
+*** IP Manager
+- Manages external IP addresses on network interfaces
+- Tracks IP address usage with reference counting
+- Handles adding and removing IPs from network devices
+
+*** Kubernetes Watchers
+- Watch for changes in Services, Endpoints, and Nodes
+- Process events using work queues and controllers
+- Notify manager of relevant changes
+
+** Communication Flow
+
+*** Service Discovery
+- Kubernetes API → Watch Queue → Manager → ManagedListener
+- Service events trigger listener creation/removal
+- Endpoint events update target destinations
+
+*** Connection Path
+- Client → External IP → ManagedListener → Service Endpoint
+- TCP connections are accepted and forwarded to backends
+- Round-robin load balancing across endpoints
+
+*** IP Management
+- Service creation → IP assignment → Network interface configuration
+- Service deletion → IP removal (with reference counting)
+
+* Installation
+
+** Prerequisites
+- Kubernetes cluster (v1.10 or higher)
+- Network interface for external IP addresses
+- =kubeconfig= with appropriate permissions
+
+** Configuration
+
+The loadbalancer is configured using environment variables or command-line flags:
+
+| Parameter    | Description                    | Default                  |
+|--------------+--------------------------------+--------------------------|
+| =KUBECONFIG= | Path to kubeconfig file        | =cluster/auth/kubeconfig= |
+| =LINKDEVICE= | Network device for external IPs | (required)              |
+| =DEBUG=      | Enable debug logging           | =false=                  |
+| =KUBERNETES= | Use Kubernetes dynamic endpoints | =true=                 |
+
+** Deployment
+
+1. Create a ConfigMap with the configuration:
+
+#+begin_src yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loadbalancer-config
+data:
+  linkdevice: "eth0"  # Set to appropriate network interface
+#+end_src
+
+2. Deploy the loadbalancer:
+
+#+begin_src yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-loadbalancer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: external-loadbalancer
+  template:
+    metadata:
+      labels:
+        app: external-loadbalancer
+    spec:
+      serviceAccountName: loadbalancer-sa
+      containers:
+      - name: loadbalancer
+        image: loadbalancer:latest
+        env:
+        - name: LINKDEVICE
+          valueFrom:
+            configMapKeyRef:
+              name: loadbalancer-config
+              key: linkdevice
+        securityContext:
+          capabilities:
+            add: ["NET_ADMIN"]
+#+end_src
+
+3. Create the necessary RBAC permissions:
+
+#+begin_src yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: loadbalancer-sa
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: loadbalancer-role
+rules:
+- apiGroups: [""]
+  resources: ["services", "endpoints", "nodes"]
+  verbs: ["get", "list", "watch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: loadbalancer-role-binding
+subjects:
+- kind: ServiceAccount
+  name: loadbalancer-sa
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: loadbalancer-role
+  apiGroup: rbac.authorization.k8s.io
+#+end_src
+
+* Usage
+
+1. Create a Kubernetes service with =type: LoadBalancer=:
+
+#+begin_src yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-service
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: example-app
+#+end_src
+
+2. The loadbalancer will:
+   - Detect the new service
+   - Assign an external IP address
+   - Create a listener for the service
+   - Update the service's externalIPs field
+   - Begin forwarding traffic to endpoints
+
+3. Access the service using the external IP:
+
+#+begin_src bash
+curl http://<external-ip>:80
+#+end_src
+
+* Development
+
+** Building
+
+#+begin_src bash
+go build ./...
+#+end_src
+
+** Testing
+
+#+begin_src bash
+go test ./...
+#+end_src
+
+** Running Locally
+
+#+begin_src bash
+./loadbalancer
+#+end_src
+
+* License
+
+This project is licensed under the Apache License 2.0 - see the LICENSE file for details.

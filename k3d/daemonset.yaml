@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: loadbalancer
+  namespace: kube-system
+  labels:
+    app: loadbalancer
+spec:
+  selector:
+    matchLabels:
+      app: loadbalancer
+  template:
+    metadata:
+      labels:
+        app: loadbalancer
+    spec:
+      serviceAccountName: loadbalancer
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+      - name: loadbalancer
+        image: loadbalancer:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+            - NET_ADMIN
+            - NET_RAW
+        env:
+        - name: DEBUG
+          valueFrom:
+            configMapKeyRef:
+              name: loadbalancer-config
+              key: debug
+              optional: true
+        - name: KUBERNETES
+          valueFrom:
+            configMapKeyRef:
+              name: loadbalancer-config
+              key: kubernetes
+              optional: true
+        - name: LINK_DEVICE
+          valueFrom:
+            configMapKeyRef:
+              name: loadbalancer-config
+              key: linkdevice
+              optional: true
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+          readOnly: true
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+      tolerations:
+      - effect: NoSchedule
+        operator: Exists
+      - effect: NoExecute
+        operator: Exists

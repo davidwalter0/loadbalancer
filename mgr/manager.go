@@ -55,6 +55,11 @@ type Mgr struct {
 	*kubernetes.Clientset
 }
 
+// GetCIDR returns the current CIDR used by the loadbalancer
+func (mgr *Mgr) GetCIDR() string {
+	return ipmgr.DefaultCIDR.String()
+}
+
 // NewMgr create a new Mgr
 func NewMgr(EnvCfg *share.ServerCfg, Clientset *kubernetes.Clientset) *Mgr {
 	return &Mgr{
@@ -113,7 +118,7 @@ func (mgr *Mgr) Set(Key string, ml *ManagedListener) {
 func (mgr *Mgr) Run() {
 	log.Println("LinkDefaultCIDR", ipmgr.DefaultCIDR)
 
-	listOpts := &metav1.ListOptions{LabelSelector: "node-role.kubernetes.io/worker", IncludeUninitialized: false}
+	listOpts := &metav1.ListOptions{LabelSelector: "node-role.kubernetes.io/worker"}
 
 	mgr.NodeWatcher = watch.NewQueueMgrListOpt(watch.NodeAPIName, mgr.Clientset, listOpts)
 	mgr.ServiceWatcher = watch.NewQueueMgr(watch.ServiceAPIName, mgr.Clientset)
@@ -157,13 +162,13 @@ func (mgr *Mgr) NodeWatch() {
 				switch item.EventType {
 				case watch.ADD:
 					log.Printf("NodeWatcher Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
-					nodeList.AddNode(Node.Spec.ExternalID)
+					nodeList.AddNode(Node.Status.Addresses[0].Address)
 				// case watch.UPDATE:
 				// 	// Expect that nodes can't change their ip address w/o
 				// 	// destroy / create, ignore UPDATE for now
 				case watch.DELETE:
 					log.Printf("NodeWatcher Event %s for node %s with type %s\n", item.Key, Node.Name, item.EventType)
-					nodeList.RemoveNode(Node.Spec.ExternalID)
+					nodeList.RemoveNode(Node.Status.Addresses[0].Address)
 				}
 			} else {
 				log.Fatal("Error in Nodes Channel")

@@ -1,0 +1,216 @@
+#+TITLE: Architecture Diagrams
+#+AUTHOR: Claude
+#+DATE: [2025-09-11]
+
+This document contains architecture diagrams for the Kubernetes External LoadBalancer.
+
+* System Components Diagram
+
+#+begin_src plantuml :file system-components.png
+@startuml
+package "LoadBalancer" {
+  class Mgr {
+    +Listeners map[string]*ManagedListener
+    +NodeWatcher *QueueMgr
+    +ServiceWatcher *QueueMgr
+    +EndpointWatcher *QueueMgr
+    +Run()
+    +NodeWatch()
+    +ServiceWatch()
+    +EndpointWatch()
+    +Listen(Service)
+    +Shutdown()
+  }
+  
+  class ManagedListener {
+    +Definition pipe.Definition
+    +Listener net.Listener
+    +Pipes map[*pipe.Pipe]bool
+    +Service *v1.Service
+    +Endpoints *v1.Endpoints
+    +CIDR *ipmgr.CIDR
+    +Open()
+    +Listening()
+    +SetExternalIP()
+    +RemoveExternalIP()
+    +Close()
+  }
+  
+  class Pipe {
+    +SourceConn net.Conn
+    +SinkConn net.Conn
+    +Connect()
+    +Close()
+  }
+  
+  class IPManager {
+    +AddAddr(IPNet, LinkDevice)
+    +RemoveAddr(IPNet, LinkDevice)
+  }
+  
+  class QueueMgr {
+    +QueueItems chan QueueItem
+    +Run(threadiness, sleepSeconds)
+  }
+  
+  class Definition {
+    +Key string
+    +Source string
+    +Sink string
+    +Name string
+    +Namespace string
+  }
+  
+  class CIDR {
+    +IP string
+    +Bits string
+    +LinkDevice string
+    +String()
+  }
+}
+
+Mgr "1" -- "many" ManagedListener : manages
+ManagedListener "1" -- "many" Pipe : manages
+ManagedListener "1" -- "1" Definition : has
+ManagedListener "1" -- "1" CIDR : has
+Mgr "1" -- "3" QueueMgr : has
+IPManager -- CIDR : uses
+@enduml
+#+end_src
+
+* Operational Flow
+
+#+begin_src plantuml :file operational-flow.png
+@startuml
+actor "Kubernetes API" as KubeAPI
+participant Manager as Mgr
+participant ManagedListener as ML
+participant IPManager as IP
+actor Client
+participant "Service Endpoint" as Backend
+
+KubeAPI -> Mgr: Service Create Event
+Mgr -> ML: Create ManagedListener
+ML -> IP: Add External IP
+ML -> ML: Create TCP Listener
+ML -> KubeAPI: Update Service externalIPs
+
+Client -> ML: TCP Connection
+ML -> Backend: Forward Connection
+Backend -> ML: Response
+ML -> Client: Forward Response
+
+KubeAPI -> Mgr: Endpoint Update Event
+Mgr -> ML: Update Endpoints
+
+KubeAPI -> Mgr: Service Delete Event
+Mgr -> ML: Close ManagedListener
+ML -> ML: Close Connections
+ML -> IP: Remove External IP
+ML -> KubeAPI: Clear Service externalIPs
+@enduml
+#+end_src
+
+* Network Architecture
+
+#+begin_src plantuml :file network-architecture.png
+@startuml
+node Client
+node "External IP on Network Interface" as ExtIP
+node LoadBalancer as LB
+node "Endpoint 1" as EP1
+node "Endpoint 2" as EP2
+node "Endpoint 3" as EP3
+
+Client -- ExtIP : TCP
+ExtIP -- LB : Forward
+LB -- EP1 : Round Robin
+LB -- EP2 : Round Robin
+LB -- EP3 : Round Robin
+
+package "Kubernetes Cluster" {
+  LB
+  EP1
+  EP2
+  EP3
+}
+@enduml
+#+end_src
+
+* Component Interactions
+
+#+begin_src plantuml :file component-interactions.png
+@startuml
+[main.go] --> [Mgr]
+[Mgr] --> [ServiceWatcher]
+[Mgr] --> [EndpointWatcher]
+[Mgr] --> [NodeWatcher]
+
+[ServiceWatcher] --> [ManagedListener Creation]
+[EndpointWatcher] --> [Endpoint Updates]
+
+[ManagedListener Creation] --> [Listener Opening]
+[ManagedListener Creation] --> [IP Assignment]
+
+[Listener Opening] --> [Connection Handling]
+[Connection Handling] --> [Pipe Creation]
+
+[Pipe Creation] --> [Data Transfer]
+@enduml
+#+end_src
+
+* Data Flow
+
+#+begin_src plantuml :file data-flow.png
+@startuml
+[Client Request] --> [LoadBalancer]
+[LoadBalancer] --> [Round Robin Selection]
+[Round Robin Selection] --> [Create Pipe]
+[Create Pipe] --> [Forward to Endpoint]
+[Forward to Endpoint] --> [Endpoint Processing]
+[Endpoint Processing] --> [Response]
+[Response] --> [Create Pipe]
+[Create Pipe] --> [Client Request]
+@enduml
+#+end_src
+
+* Initialization Sequence
+
+#+begin_src plantuml :file initialization-sequence.png
+@startuml
+participant Main
+participant Kubeconfig
+participant Mgr
+participant IPMgr
+participant Watchers
+
+Main -> Kubeconfig: NewClientset()
+Kubeconfig --> Main: clientset
+Main -> Mgr: NewMgr(config, clientset)
+Mgr -> IPMgr: Initialize IP Management
+Mgr -> Watchers: Create Watchers
+Main -> Mgr: Run()
+Mgr -> Watchers: Start Watching
+Watchers --> Mgr: Service Event
+Mgr -> Mgr: Handle Event
+@enduml
+#+end_src
+
+* State Transitions
+
+#+begin_src plantuml :file state-transitions.png
+@startuml
+[*] --> Running
+Running --> [*]: Shutdown
+
+state Running {
+  [*] --> Watching
+  Watching --> CreatingListener: Service Event
+  CreatingListener --> ManagingPipes: Listener Created
+  ManagingPipes --> UpdatingEndpoints: Endpoint Event
+  UpdatingEndpoints --> ManagingPipes
+  ManagingPipes --> ClosingListener: Service Deleted
+  ClosingListener --> Watching
+}
+@enduml
+#+end_src

@@ -1,0 +1,406 @@
+#+TITLE: User Guide
+#+AUTHOR: Claude
+#+DATE: [2025-09-11]
+
+* Introduction
+
+The Kubernetes External LoadBalancer provides network connectivity to Kubernetes services of type LoadBalancer by assigning external IP addresses and forwarding traffic to service endpoints.
+
+This guide covers installation, configuration, usage, and troubleshooting.
+
+* Installation
+
+** Prerequisites
+
+Before installing the loadbalancer, ensure you have:
+
+- A Kubernetes cluster (v1.10 or higher)
+- A host with access to the Kubernetes API
+- A network interface for external IPs
+- Sufficient permissions to create RBAC resources
+
+** Installation Methods
+
+*** Method 1: Direct Deployment
+
+1. Clone the repository:
+
+#+begin_src bash :tangle no
+git clone https://github.com/davidwalter0/loadbalancer.git
+cd loadbalancer
+#+end_src
+
+2. Build the binary:
+
+#+begin_src bash :tangle no
+go build
+#+end_src
+
+3. Create the necessary RBAC resources:
+
+#+begin_src bash :tangle no
+kubectl apply -f deploy/rbac.yaml
+#+end_src
+
+4. Deploy the loadbalancer:
+
+#+begin_src bash :tangle no
+kubectl apply -f deploy/deployment.yaml
+#+end_src
+
+*** Method 2: Using Helm
+
+1. Add the Helm repository:
+
+#+begin_src bash :tangle no
+helm repo add loadbalancer https://example.com/charts
+helm repo update
+#+end_src
+
+2. Install the chart:
+
+#+begin_src bash :tangle no
+helm install external-lb loadbalancer/external-loadbalancer \
+  --set linkdevice=eth0
+#+end_src
+
+* Configuration
+
+** Configuration Parameters
+
+The loadbalancer supports the following configuration parameters:
+
+| Parameter          | Description                                 | Default                  | Required |
+|--------------------+---------------------------------------------+--------------------------+----------|
+| =KUBECONFIG=       | Path to kubeconfig file                     | =cluster/auth/kubeconfig= | No       |
+| =LINKDEVICE=       | Network device for external IPs             | -                        | Yes      |
+| =DEBUG=            | Enable debug logging                        | =false=                  | No       |
+| =KUBERNETES=       | Use Kubernetes dynamic endpoints            | =true=                   | No       |
+
+** Configuration Methods
+
+*** Environment Variables
+
+Set environment variables in the deployment:
+
+#+begin_src yaml :tangle no
+env:
+- name: LINKDEVICE
+  value: "eth0"
+- name: DEBUG
+  value: "true"
+#+end_src
+
+*** ConfigMap
+
+Create a ConfigMap and reference it in the deployment:
+
+#+begin_src yaml :tangle no
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loadbalancer-config
+data:
+  linkdevice: "eth0"
+  debug: "true"
+---
+# In deployment.yaml
+env:
+- name: LINKDEVICE
+  valueFrom:
+    configMapKeyRef:
+      name: loadbalancer-config
+      key: linkdevice
+#+end_src
+
+*** Command Line Flags
+
+Pass configuration as command line flags:
+
+#+begin_src bash :tangle no
+./loadbalancer --linkdevice=eth0 --debug=true
+#+end_src
+
+* Usage
+
+** Creating a LoadBalancer Service
+
+1. Create a Kubernetes service with =type: LoadBalancer=:
+
+#+begin_src yaml :tangle no
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-service
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: example-app
+#+end_src
+
+2. Apply the service:
+
+#+begin_src bash :tangle no
+kubectl apply -f example-service.yaml
+#+end_src
+
+3. Check the service status:
+
+#+begin_src bash :tangle no
+kubectl get service example-service
+#+end_src
+
+The service should show an external IP assigned by the loadbalancer.
+
+** Service Annotations
+
+The loadbalancer supports the following service annotations:
+
+| Annotation                           | Description                        | Default |
+|--------------------------------------+------------------------------------+---------|
+| =loadbalancer.example.com/ip=        | Request a specific external IP     | Auto    |
+| =loadbalancer.example.com/internal=  | Create an internal-only loadbalancer | =false= |
+
+Example:
+
+#+begin_src yaml :tangle no
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-service
+  annotations:
+    loadbalancer.example.com/ip: "192.168.1.100"
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: example-app
+#+end_src
+
+** Accessing Services
+
+Once the service has an external IP, you can access it using:
+
+#+begin_src bash :tangle no
+curl http://<external-ip>:<port>
+#+end_src
+
+** Viewing Status
+
+To view the status of the loadbalancer:
+
+#+begin_src bash :tangle no
+kubectl logs deployment/external-loadbalancer
+#+end_src
+
+* Troubleshooting
+
+** Common Issues
+
+*** No External IP Assigned
+
+*Symptoms:* Service remains in pending state with no external IP.
+
+*Possible causes:*
+- LoadBalancer not running
+- Network interface not found
+- RBAC permissions issue
+
+*Resolution:*
+1. Check loadbalancer logs:
+   #+begin_src bash :tangle no
+   kubectl logs deployment/external-loadbalancer
+   #+end_src
+
+2. Verify the network interface exists:
+   #+begin_src bash :tangle no
+   ip addr show
+   #+end_src
+
+3. Check RBAC permissions:
+   #+begin_src bash :tangle no
+   kubectl auth can-i update services --as=system:serviceaccount:default:loadbalancer-sa
+   kubectl auth can-i watch services --as=system:serviceaccount:default:loadbalancer-sa
+   #+end_src
+
+*** Cannot Connect to Service
+
+*Symptoms:* External IP is assigned but connection refused.
+
+*Possible causes:*
+- Service has no endpoints
+- Firewall blocking connection
+- Application not listening on port
+
+*Resolution:*
+1. Check if service has endpoints:
+   #+begin_src bash :tangle no
+   kubectl get endpoints <service-name>
+   #+end_src
+
+2. Verify firewall rules:
+   #+begin_src bash :tangle no
+   iptables -L
+   #+end_src
+
+3. Check if application is listening:
+   #+begin_src bash :tangle no
+   kubectl exec -it <pod-name> -- netstat -lntp
+   #+end_src
+
+*** Performance Issues
+
+*Symptoms:* High latency or connection failures.
+
+*Possible causes:*
+- Insufficient resources
+- Network congestion
+- Too many connections
+
+*Resolution:*
+1. Check loadbalancer resource usage:
+   #+begin_src bash :tangle no
+   kubectl top pod -l app=external-loadbalancer
+   #+end_src
+
+2. Monitor network traffic:
+   #+begin_src bash :tangle no
+   iftop -i <interface>
+   #+end_src
+
+3. Scale up resources:
+   #+begin_src bash :tangle no
+   kubectl edit deployment external-loadbalancer
+   # Increase CPU/memory limits
+   #+end_src
+
+** Diagnostic Commands
+
+*** Check LoadBalancer Status
+
+#+begin_src bash :tangle no
+kubectl get pod -l app=external-loadbalancer
+kubectl logs deployment/external-loadbalancer
+#+end_src
+
+*** Check Service Configuration
+
+#+begin_src bash :tangle no
+kubectl get service <service-name> -o yaml
+kubectl describe service <service-name>
+#+end_src
+
+*** Check Network Configuration
+
+#+begin_src bash :tangle no
+ip addr show
+ip route
+#+end_src
+
+*** Check Connectivity
+
+#+begin_src bash :tangle no
+telnet <external-ip> <port>
+curl -v http://<external-ip>:<port>
+#+end_src
+
+* Advanced Topics
+
+** High Availability Setup
+
+For production environments, consider running multiple instances of the loadbalancer:
+
+1. Deploy multiple instances:
+   #+begin_src bash :tangle no
+   kubectl scale deployment external-loadbalancer --replicas=3
+   #+end_src
+
+2. Use node anti-affinity:
+   #+begin_src yaml :tangle no
+   affinity:
+     podAntiAffinity:
+       requiredDuringSchedulingIgnoredDuringExecution:
+       - labelSelector:
+           matchExpressions:
+           - key: app
+             operator: In
+             values:
+             - external-loadbalancer
+         topologyKey: "kubernetes.io/hostname"
+   #+end_src
+
+** Integration with External Systems
+
+*** Monitoring with Prometheus
+
+1. Enable Prometheus metrics:
+   #+begin_src yaml :tangle no
+   env:
+   - name: ENABLE_METRICS
+     value: "true"
+   - name: METRICS_PORT
+     value: "9090"
+   #+end_src
+
+2. Create a ServiceMonitor:
+   #+begin_src yaml :tangle no
+   apiVersion: monitoring.coreos.com/v1
+   kind: ServiceMonitor
+   metadata:
+     name: external-loadbalancer
+   spec:
+     selector:
+       matchLabels:
+         app: external-loadbalancer
+     endpoints:
+     - port: metrics
+   #+end_src
+
+*** Logging with Fluentd
+
+Configure Fluentd to collect logs:
+
+#+begin_src yaml :tangle no
+# fluentd-configmap.yaml
+data:
+  fluent.conf: |
+    <source>
+      @type tail
+      path /var/log/pods/*external-loadbalancer*/*.log
+      pos_file /var/log/fluentd-loadbalancer.pos
+      tag kubernetes.loadbalancer
+      <parse>
+        @type json
+      </parse>
+    </source>
+#+end_src
+
+* Reference
+
+** Command Line Options
+
+| Option                 | Description                                | Default |
+|------------------------+--------------------------------------------+---------|
+| =--kubeconfig=         | Path to kubeconfig file                    | cluster/auth/kubeconfig |
+| =--linkdevice=         | Network device for external IPs            | -       |
+| =--debug=              | Enable debug logging                       | false   |
+| =--kubernetes=         | Use Kubernetes dynamic endpoints           | true    |
+| =--help=               | Show help message                          | -       |
+| =--version=            | Show version information                   | -       |
+
+** Environment Variables
+
+All command line options have equivalent environment variables with the same name in uppercase.
+
+** Files and Directories
+
+| Path                | Description                                |
+|---------------------+--------------------------------------------|
+| =/etc/loadbalancer= | Default configuration directory            |
+| =/var/log/loadbalancer= | Log directory                          |
+| =/var/run/loadbalancer.pid= | PID file                          |

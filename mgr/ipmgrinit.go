@@ -19,14 +19,86 @@ limitations under the License.
 package mgr
 
 import (
+	"log"
 	"github.com/davidwalter0/loadbalancer/global"
 	"github.com/davidwalter0/loadbalancer/ipmgr"
 )
 
-func init() {
-	ipmgr.DefaultCIDR = ipmgr.LinkDefaultCIDR(global.Cfg().LinkDevice)
+// Initialize configures the IP manager with the provided link device
+// If no link device is specified, it will attempt to auto-detect one using the following priority:
+// 1. Physical wired interface with IPv4 address
+// 2. Any non-virtual wired interface with IPv4 address
+// 3. Any wired interface with IPv4 address
+// 4. Wireless interface with IPv4 address
+// If a link device is specified but doesn't exist, it will fallback to auto-detection
+func Initialize() {
+	linkDevice := global.Cfg().LinkDevice
+
+	// Auto-detect link device if not specified
+	if linkDevice == "" {
+		log.Println("No link device specified, attempting auto-detection with priority...")
+		var err error
+		linkDevice, err = ipmgr.AutoDetectInterface()
+		if err != nil {
+			log.Fatalf("Error auto-detecting network interface: %v", err)
+		}
+
+		if linkDevice == "" {
+			log.Fatal("No suitable network interface found for auto-detection")
+		}
+
+		// Update the global config
+		global.Cfg().LinkDevice = linkDevice
+	}
+
+	log.Printf("Using link device: %s", linkDevice)
+
+	// Check if restricted CIDR is specified
+	restrictedCIDR := global.Cfg().RestrictedCIDR
+	if restrictedCIDR != "" {
+		log.Printf("Using restricted CIDR range: %s", restrictedCIDR)
+		ipmgr.DefaultCIDR = ipmgr.StringToCIDR(restrictedCIDR)
+		ipmgr.DefaultCIDR.LinkDevice = linkDevice
+	} else {
+		// If no restricted CIDR, check if the specified link device exists
+		ipmgr.DefaultCIDR = ipmgr.LinkDefaultCIDR(linkDevice)
+	}
+
+	if ipmgr.DefaultCIDR == nil {
+		log.Printf("Link device '%s' not found or has no IPv4 addresses, falling back to auto-detection...", linkDevice)
+
+		var err error
+		linkDevice, err = ipmgr.AutoDetectInterface()
+		if err != nil {
+			log.Fatalf("Error auto-detecting network interface: %v", err)
+		}
+
+		if linkDevice == "" {
+			log.Fatal("No suitable network interface found for auto-detection")
+		}
+
+		log.Printf("Auto-detected fallback interface: %s", linkDevice)
+
+		// Update the global config and retry
+		global.Cfg().LinkDevice = linkDevice
+
+		// If restricted CIDR is specified, use it
+		restrictedCIDR := global.Cfg().RestrictedCIDR
+		if restrictedCIDR != "" {
+			log.Printf("Using restricted CIDR range: %s", restrictedCIDR)
+			ipmgr.DefaultCIDR = ipmgr.StringToCIDR(restrictedCIDR)
+			ipmgr.DefaultCIDR.LinkDevice = linkDevice
+		} else {
+			ipmgr.DefaultCIDR = ipmgr.LinkDefaultCIDR(linkDevice)
+		}
+
+		if ipmgr.DefaultCIDR == nil {
+			log.Fatalf("Auto-detected interface '%s' also has no IPv4 addresses", linkDevice)
+		}
+	}
+
 	ipmgr.IP = ipmgr.DefaultCIDR.IP
 	ipmgr.Bits = ipmgr.DefaultCIDR.Bits
-	ipmgr.LinkDevice = global.Cfg().LinkDevice
+	ipmgr.LinkDevice = linkDevice
 	ipmgr.Debug = global.Cfg().Debug
 }

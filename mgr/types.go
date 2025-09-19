@@ -19,6 +19,7 @@ limitations under the License.
 package mgr
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -29,6 +30,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/davidwalter0/go-mutex"
+	"github.com/davidwalter0/loadbalancer/health"
 	"github.com/davidwalter0/loadbalancer/ipmgr"
 	"github.com/davidwalter0/loadbalancer/pipe"
 )
@@ -70,6 +72,7 @@ type ManagedListener struct {
 	IPs
 	Ports
 	*ipmgr.CIDR
+	HealthChecker    *health.Checker      `json:"-"` // Health checker for endpoints
 }
 
 type internalClient struct {
@@ -82,7 +85,7 @@ func (i *internalClient) get() (ep *v1.Endpoints) {
 	var ns = i.Service.ObjectMeta.Namespace
 	var name = i.Service.ObjectMeta.Name
 	client := i.Clientset.CoreV1().Endpoints(ns)
-	ep, err = client.Get(name, metav1.GetOptions{})
+	ep, err = client.Get(context.Background(), name, metav1.GetOptions{})
 	if err != nil {
 		log.Println(err)
 	}

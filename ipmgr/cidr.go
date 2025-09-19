@@ -56,11 +56,42 @@ func (c *CIDR) MatchAddr(addr *netlink.Addr) bool {
 }
 
 // StringToCIDR cidr ip/bits string to type CIDR
+// Returns nil if the CIDR format is invalid
 func StringToCIDR(cidr string) (c *CIDR) {
-	split := strings.Split(cidr, "/")
-	if len(split) == 2 {
-		c = &CIDR{IP: split[0], Bits: split[1]}
+	// Ensure valid CIDR format
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		// Try to add the default /32 suffix if it's just an IP
+		if ip := net.ParseIP(cidr); ip != nil {
+			if ip4 := ip.To4(); ip4 != nil {
+				cidr = cidr + "/32"
+				_, ipNet, err = net.ParseCIDR(cidr)
+				if err != nil {
+					fmt.Printf("Error parsing CIDR %s: %v\n", cidr, err)
+					return nil
+				}
+			} else {
+				// IPv6 address
+				cidr = cidr + "/128"
+				_, ipNet, err = net.ParseCIDR(cidr)
+				if err != nil {
+					fmt.Printf("Error parsing CIDR %s: %v\n", cidr, err)
+					return nil
+				}
+			}
+		} else {
+			fmt.Printf("Error parsing CIDR %s: %v\n", cidr, err)
+			return nil
+		}
 	}
+
+	// Use normalized IP from net.ParseCIDR
+	ip := ipNet.IP.String()
+	ones, _ := ipNet.Mask.Size()
+	mask := fmt.Sprintf("%d", ones)
+
+	c = &CIDR{IP: ip, Bits: mask}
+	fmt.Printf("Parsed CIDR %s as IP: %s, Bits: %s\n", cidr, ip, mask)
 	return
 }
 

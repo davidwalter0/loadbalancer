@@ -19,9 +19,7 @@ limitations under the License.
 package share
 
 import (
-	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"crypto/tls"
@@ -31,7 +29,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/davidwalter0/go-cfg"
+	"github.com/davidwalter0/go-cfg/v3/pkg/config"
 )
 
 const (
@@ -59,10 +57,11 @@ func NewClientCfg() *ClientCfg {
 }
 
 type ForwarderCfg struct {
-	Debug      bool   `json:"debug"       doc:"increase verbosity"                               default:"false"`
-	Kubeconfig string `json:"kubeconfig"  doc:"kubernetes auth secrets / configuration file"     default:"cluster/auth/kubeconfig"`
-	Kubernetes bool   `json:"kubernetes"  doc:"use kubernetes dynamic endpoints from service/ns" default:"true"`
-	LinkDevice string `json:"linkdevice"  doc:"device for load balancers external addresses"`
+	Debug       bool   `json:"debug"       doc:"increase verbosity"                               default:"false"`
+	Kubeconfig  string `json:"kubeconfig"  doc:"kubernetes auth secrets / configuration file"     default:"cluster/auth/kubeconfig"`
+	Kubernetes  bool   `json:"kubernetes"  doc:"use kubernetes dynamic endpoints from service/ns" default:"true"`
+	LinkDevice  string `json:"linkdevice"  doc:"device for load balancers external addresses"     default:""`
+	RestrictedCIDR string `json:"restricted-cidr" doc:"restricted IP range for load balancer (e.g. 192.168.0.224/28)" default:"192.168.0.224/28"`
 }
 
 // ClientCfg options to configure endPtDefn
@@ -89,24 +88,20 @@ type TLSCfg struct {
 func (envCfg *ServerCfg) Read() {
 	envCfg.ForwarderCfg.Read()
 	// envCfg.TLSCfg.Read()
-	cfg.Finalize()
-	if len(envCfg.LinkDevice) == 0 {
-		fmt.Fprintln(os.Stderr, log.Prefix(), "Error: ether iface link device not set")
-		cfg.Usage()
-		os.Exit(1)
-	}
+	
+	// LinkDevice can be empty now, the auto-detection will handle it
 }
 
 // Read from env variables or command line flags
 func (envCfg *ClientCfg) Read() {
 	envCfg.TLSCfg.Read()
-	cfg.Finalize()
 }
 
 // Read from env variables or command line flags
 func (envCfg *ForwarderCfg) Read() {
 	var err error
-	if err = cfg.AddStruct(envCfg); err != nil {
+	manager := config.NewManager()
+	if err = manager.Load(envCfg); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }
@@ -115,7 +110,8 @@ func (envCfg *ForwarderCfg) Read() {
 // the env configuration file endPtDefing pairs.
 func (envCfg *TLSCfg) Read() {
 	var err error
-	if err = cfg.AddStruct(envCfg); err != nil {
+	manager := config.NewManager()
+	if err = manager.Load(envCfg); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }

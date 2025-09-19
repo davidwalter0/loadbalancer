@@ -25,6 +25,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/davidwalter0/go-mutex"
+	"github.com/davidwalter0/loadbalancer/health"
 	"github.com/davidwalter0/loadbalancer/helper"
 	"github.com/davidwalter0/loadbalancer/ipmgr"
 	"github.com/davidwalter0/loadbalancer/pipe"
@@ -56,6 +57,34 @@ func NewManagedListener(Service *v1.Service,
 		ep = Endpoints(Clientset, Service)
 	}
 
+	// Create health checker with default settings
+	healthSettings := health.DefaultSettings()
+	
+	// Check for health check annotations on the service
+	if Service.Annotations != nil {
+		if val, ok := Service.Annotations["loadbalancer.example.com/health-check-enabled"]; ok {
+			healthSettings.Enabled = (val == "true")
+		}
+		if val, ok := Service.Annotations["loadbalancer.example.com/health-check-type"]; ok {
+			if val == "http" {
+				healthSettings.Type = health.HTTPCheck
+			}
+		}
+		if val, ok := Service.Annotations["loadbalancer.example.com/health-check-path"]; ok && val != "" {
+			healthSettings.HTTPPath = val
+		}
+		if val, ok := Service.Annotations["loadbalancer.example.com/health-check-interval"]; ok {
+			if interval, err := time.ParseDuration(val); err == nil {
+				healthSettings.Interval = interval
+			}
+		}
+		if val, ok := Service.Annotations["loadbalancer.example.com/health-check-timeout"]; ok {
+			if timeout, err := time.ParseDuration(val); err == nil {
+				healthSettings.Timeout = timeout
+			}
+		}
+	}
+
 	ml = &ManagedListener{
 		Definition: *NewPipeDefinition(Service, envCfg),
 		Listener:   nil,
@@ -73,6 +102,7 @@ func NewManagedListener(Service *v1.Service,
 		Create:     time.Now(),
 		Endpoints:  ep,
 		CIDR:       c,
+		HealthChecker: health.NewChecker(healthSettings),
 		// Port:       port,
 		// IPs:        ips,
 		// Ports:      ports,

@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-.PHONY: install clean build yaml appl get push tag tag-push info
+export GOSUMDB=
+.PHONY: install clean build utils install-utils yaml appl get push tag tag-push info e2e-test e2e-test-basic e2e-test-health e2e-test-debug e2e-test-ci setcap
 # To enable kubernetes commands a valid configuration is required
 
 # export GOPATH=/go
@@ -30,12 +31,31 @@ depends:=$(shell ls -1 */*.go| grep -v test)
 build_deps:=$(wildcard *.go)
 target:=bin/$(APPL)
 
-include Makefile.defs
+# include Makefile.defs
 
-all: info
+all: info build utils setcap
 
 info: 
 	@echo $(info)
+
+# Build utility binaries
+utils: bin
+	@echo "Building utility binaries..."
+	CGO_ENABLED=0 go build --tags netgo -o bin/ ./cmd/...
+
+# Install utility binaries to ~/go/bin
+install-utils: utils
+	@echo "Installing utility binaries to ~/go/bin..."
+	@mkdir -p ~/go/bin
+	@cp bin/findinterfaces ~/go/bin/
+	@cp bin/listinterfaces ~/go/bin/
+	@cp bin/getbestinterface ~/go/bin/
+	@cp bin/podwatch ~/go/bin/
+	@cp bin/nodes ~/go/bin/
+	@cp bin/pods ~/go/bin/
+	@cp bin/endpointwatch ~/go/bin/
+	@cp bin/servicewatch ~/go/bin/
+	@cp bin/nodewatch ~/go/bin/
 
 etags:
 	etags $(depends) $(build_deps)
@@ -57,6 +77,17 @@ $(target): .dep bin $(build_deps) $(depends) Makefile
 	fi;																		\
 	CGO_ENABLED=0 go build --tags netgo -ldflags "$${args}" -o $@ $(build_deps) ;
 	touch $@
+
+# Set capabilities on the loadbalancer binary to allow binding to low ports without root
+setcap: $(target)
+	@echo "Setting capabilities on $(target)..."
+	@if command -v setcap >/dev/null 2>&1; then \
+		sudo setcap 'cap_net_admin,cap_net_raw,cap_net_bind_service=+ep' $(target) && \
+		echo "Successfully set capabilities on $(target)" || \
+		echo "WARNING: Failed to set capabilities on $(target). You may need to run with sudo."; \
+	else \
+		echo "WARNING: setcap command not found. Install libcap2-bin package."; \
+	fi
 
 install: .dep/install
 
@@ -118,3 +149,6 @@ clean: .dep bin
 
 bin:
 	mkdir -p bin
+
+# Include E2E testing targets
+include Makefile.e2e

@@ -1,0 +1,306 @@
+#+TITLE: Replacing MetalLB with Loadbalancer on kdc1
+#+AUTHOR: 
+#+DATE: 2025-09-11
+
+* Introduction
+
+This document provides step-by-step instructions for replacing MetalLB
+with the =loadbalancer= on kdc1. The =loadbalancer= is a lightweight
+alternative to MetalLB that provides IP address allocation and traffic
+routing for Kubernetes services of type LoadBalancer.
+
+* Prerequisites
+
+- SSH access to kdc1 server
+- Docker installed on kdc1
+- kubectl configured to access the Kubernetes cluster
+- Administrator privileges on kdc1
+
+* Uninstalling MetalLB
+
+Before installing our loadbalancer, we need to remove the existing
+MetalLB installation.
+
+** Check if MetalLB is installed
+
+#+begin_src bash
+kubectl get namespace metallb-system
+#+end_src
+
+** Remove MetalLB (if installed with manifests)
+
+#+begin_src bash
+kubectl delete namespace metallb-system
+#+end_src
+
+** Remove MetalLB (if installed with Helm)
+
+#+begin_src bash
+helm uninstall metallb -n metallb-system
+#+end_src
+
+* Deploying Loadbalancer on kdc1
+
+** Option 1: Running as a Docker container
+
+*** Identify the network interface to use
+
+This interface will be used to allocate external IP addresses.
+
+#+begin_src bash
+ip addr
+#+end_src
+
+Note the name of the interface with external connectivity (e.g., =eth0=, =ens192=).
+
+*** Pull the loadbalancer image
+
+#+begin_src bash
+docker pull kdc1:5000/loadbalancer:latest
+#+end_src
+
+*** Run the loadbalancer container
+
+#+begin_src bash
+docker run \
+  --name loadbalancer \
+  --rm \
+  --network host \
+  --cap-add NET_ADMIN \
+  --cap-add NET_RAW \
+  --volume /var/log:/var/log:ro \
+  -e DEBUG="true" \
+  -e KUBERNETES="true" \
+  -e LINK_DEVICE="eth0" \  # Replace with your actual interface
+  -e KUBECONFIG="/etc/kubernetes/admin.conf" \
+  -v /etc/kubernetes/admin.conf:/etc/kubernetes/admin.conf:ro \
+  kdc1:5000/loadbalancer:latest
+#+end_src
+
+** Option 2: Creating a systemd service (recommended for production)
+
+*** Create the systemd service file
+
+#+begin_src bash
+cat <<EOF | sudo tee /etc/systemd/system/loadbalancer.service
+[Unit]
+Description=Kubernetes External LoadBalancer
+After=docker.service
+Requires=docker.service
+
+[Service]
+TimeoutStartSec=0
+Restart=always
+ExecStartPre=-/usr/bin/docker stop loadbalancer
+ExecStartPre=-/usr/bin/docker rm loadbalancer
+ExecStart=/usr/bin/docker run --name loadbalancer --rm --network host --cap-add NET_ADMIN --cap-add NET_RAW -v /var/log:/var/log:ro -e DEBUG="true" -e KUBERNETES="true" -e LINK_DEVICE="eth0" -e KUBECONFIG="/etc/kubernetes/admin.conf" -v /etc/kubernetes/admin.conf:/etc/kubernetes/admin.conf:ro kdc1:5000/loadbalancer:latest
+ExecStop=/usr/bin/docker stop loadbalancer
+
+[Install]
+WantedBy=multi-user.target
+EOF
+#+end_src
+
+*** Enable and start the service
+
+#+begin_src bash
+sudo systemctl daemon-reload
+sudo systemctl enable loadbalancer
+sudo systemctl start loadbalancer
+#+end_src
+
+** Option 3: Advanced Configuration with ConfigMap
+
+For more control over IP allocation, you can create a ConfigMap to configure the loadbalancer.
+
+*** Create a ConfigMap file
+
+#+begin_src bash
+cat <<EOF > loadbalancer-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loadbalancer-config
+  namespace: kube-system
+data:
+  # Specify the network interface
+  linkdevice: "eth0"  # Replace with your actual interface
+  
+  # Enable debug logging
+  debug: "true"
+  
+  # Enable Kubernetes integration
+  kubernetes: "true"
+  
+  # Optional: Specify CIDR for IP allocation
+  # If not set, it will use the subnet of the linkdevice
+  cidr: "192.168.0.0/24"  # Replace with your desired IP range
+EOF
+#+end_src
+
+*** Apply the ConfigMap
+
+#+begin_src bash
+kubectl apply -f loadbalancer-config.yaml
+#+end_src
+
+* Verifying the Installation
+
+** Check if the loadbalancer service is running
+
+For Option 1 (Docker container):
+#+begin_src bash
+docker ps | grep loadbalancer
+#+end_src
+
+For Option 2 (systemd service):
+#+begin_src bash
+sudo systemctl status loadbalancer
+#+end_src
+
+** Monitor logs
+
+For Option 1 (Docker container):
+#+begin_src bash
+docker logs -f loadbalancer
+#+end_src
+
+For Option 2 (systemd service):
+#+begin_src bash
+sudo journalctl -fu loadbalancer
+#+end_src
+
+** Test with a sample service
+
+Create a test deployment and service:
+#+begin_src bash
+kubectl create deployment nginx --image=nginx
+kubectl expose deployment nginx --port=80 --type=LoadBalancer
+#+end_src
+
+Check if an external IP is assigned:
+#+begin_src bash
+kubectl get svc nginx
+#+end_src
+
+The output should include an EXTERNAL-IP if the loadbalancer is working correctly.
+
+** Test connectivity
+
+Try accessing the service using the assigned external IP:
+#+begin_src bash
+curl http://<EXTERNAL-IP>
+#+end_src
+
+* Troubleshooting
+
+** No external IP assigned
+
+If services remain in pending state without an external IP:
+
+1. Check the loadbalancer logs:
+   #+begin_src bash
+   docker logs loadbalancer
+   # or
+   sudo journalctl -fu loadbalancer
+   #+end_src
+
+2. Verify the network interface exists and has an IP address:
+   #+begin_src bash
+   ip addr show eth0  # Replace with your interface
+   #+end_src
+
+3. Ensure the container has the necessary permissions:
+   #+begin_src bash
+   # The container should run with these flags
+   --network host --cap-add NET_ADMIN --cap-add NET_RAW
+   #+end_src
+
+** Service has external IP but is not accessible
+
+1. Check if the IP is bound to the interface:
+   #+begin_src bash
+   ip addr show | grep <EXTERNAL-IP>
+   #+end_src
+
+2. Check if iptables rules are set up correctly:
+   #+begin_src bash
+   sudo iptables -t nat -L PREROUTING -n
+   sudo iptables -t nat -L POSTROUTING -n
+   #+end_src
+
+3. Verify there are no firewall rules blocking access:
+   #+begin_src bash
+   sudo iptables -L -n
+   #+end_src
+
+* Advanced Configuration
+
+** Using specific IP address for a service
+
+You can request a specific IP address for a service:
+
+#+begin_src yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service
+spec:
+  selector:
+    app: my-app
+  ports:
+  - port: 80
+    targetPort: 8080
+  type: LoadBalancer
+  loadBalancerIP: 192.168.1.100  # Specify desired IP
+#+end_src
+
+** Using a custom CIDR range
+
+If you want to use a specific IP range different from the interface subnet:
+
+1. Edit the configuration:
+   #+begin_src bash
+   kubectl edit configmap loadbalancer-config -n kube-system
+   #+end_src
+
+2. Add or modify the cidr entry:
+   #+begin_src yaml
+   data:
+     cidr: "192.168.1.0/24"  # Specify your desired range
+   #+end_src
+
+3. Restart the loadbalancer:
+   #+begin_src bash
+   sudo systemctl restart loadbalancer
+   # or
+   docker restart loadbalancer
+   #+end_src
+
+* Maintenance
+
+** Updating the loadbalancer
+
+To update to a new version:
+
+1. Pull the latest image:
+   #+begin_src bash
+   docker pull kdc1:5000/loadbalancer:latest
+   #+end_src
+
+2. Restart the service:
+   #+begin_src bash
+   sudo systemctl restart loadbalancer
+   # or
+   docker restart loadbalancer
+   #+end_src
+
+** Backing up IP allocations
+
+The loadbalancer stores its state in Kubernetes Services. No additional backup is required as the IP allocations are stored in the service.status.loadBalancer.ingress field.
+
+* Conclusion
+
+You have successfully replaced MetalLB with the loadbalancer on kdc1. The loadbalancer will now handle IP allocation and traffic routing for Kubernetes services of type LoadBalancer.
+
+For any issues or feature requests, please create an issue on the GitHub repository.

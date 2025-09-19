@@ -1,0 +1,56 @@
+# E2E Testing Makefile targets
+# Include this file in the main Makefile
+
+.PHONY: e2e-test e2e-test-basic e2e-test-health e2e-test-all
+
+# Path to the loadbalancer binary
+E2E_BINARY ?= $(CURDIR)/$(target)
+
+# Default network interface for tests
+E2E_NETWORK_IFACE ?= eth0
+
+# Default namespace (leave empty for auto-generated)
+E2E_NAMESPACE ?= 
+
+# Run all E2E tests
+e2e-test: $(target)
+	@echo "Running all E2E tests..."
+	LOADBALANCER_BINARY=$(E2E_BINARY) \
+	E2E_NETWORK_IFACE=$(E2E_NETWORK_IFACE) \
+	E2E_NAMESPACE=$(E2E_NAMESPACE) \
+	go test ./test/e2e -v
+
+# Run only basic connectivity tests
+e2e-test-basic: $(target)
+	@echo "Running basic connectivity E2E tests..."
+	LOADBALANCER_BINARY=$(E2E_BINARY) \
+	E2E_NETWORK_IFACE=$(E2E_NETWORK_IFACE) \
+	E2E_NAMESPACE=$(E2E_NAMESPACE) \
+	E2E_TEST_FILTER=BasicConnectivity \
+	go test ./test/e2e -v
+
+# Run only health check tests
+e2e-test-health: $(target)
+	@echo "Running health check E2E tests..."
+	LOADBALANCER_BINARY=$(E2E_BINARY) \
+	E2E_NETWORK_IFACE=$(E2E_NETWORK_IFACE) \
+	E2E_NAMESPACE=$(E2E_NAMESPACE) \
+	E2E_TEST_FILTER=HealthCheck \
+	go test ./test/e2e -v
+
+# Run all tests but leave resources for debugging
+e2e-test-debug: $(target)
+	@echo "Running all E2E tests in debug mode (resources will not be cleaned up on failure)..."
+	LOADBALANCER_BINARY=$(E2E_BINARY) \
+	E2E_NETWORK_IFACE=$(E2E_NETWORK_IFACE) \
+	E2E_NAMESPACE=$(E2E_NAMESPACE) \
+	E2E_CLEANUP_ON_FAIL=false \
+	go test ./test/e2e -v
+
+# Run E2E tests in a CI environment
+e2e-test-ci: $(target)
+	@echo "Running E2E tests in CI environment..."
+	LOADBALANCER_BINARY=$(E2E_BINARY) \
+	E2E_NETWORK_IFACE=$(E2E_NETWORK_IFACE) \
+	E2E_NAMESPACE=lb-e2e-ci-$(shell date +%s) \
+	go test ./test/e2e -v

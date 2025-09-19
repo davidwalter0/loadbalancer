@@ -1,0 +1,238 @@
+#+TITLE: Technical Specifications
+#+AUTHOR: Claude
+#+DATE: [2025-09-11]
+
+* System Requirements
+
+** Functional Requirements
+
+- Monitor Kubernetes services of type LoadBalancer
+- Assign external IP addresses to services
+- Listen for TCP connections on service ports
+- Forward connections to service endpoints
+- Update service status with external IPs
+- Handle service and endpoint changes dynamically
+- Support graceful shutdown
+
+** Non-Functional Requirements
+
+- Reliability: Maintain connectivity during endpoint changes
+- Performance: Minimal latency overhead for connections
+- Scalability: Support multiple services and endpoints
+- Security: Operate with minimal privileges
+- Configurability: Allow customization of network interfaces and behavior
+
+** Constraints
+
+- Must operate with NET_ADMIN capability
+- Requires access to network interfaces
+- Needs permissions to watch and update Kubernetes resources
+
+* Component Specifications
+
+** Manager (mgr.Mgr)
+
+The central controller component that coordinates the entire system.
+
+*** Responsibilities
+- Initialize and manage service, endpoint, and node watchers
+- Create and manage listeners for LoadBalancer services
+- Handle lifecycle events for services and endpoints
+- Coordinate graceful shutdown of all components
+
+*** Key Methods
+- =NewMgr(EnvCfg, Clientset)= - Create a new Manager
+- =Run()= - Start the manager and all watchers
+- =Listen(Service)= - Create or update a listener for a service
+- =ServiceWatch()= - Watch for service events
+- =EndpointWatch()= - Watch for endpoint events
+- =NodeWatch()= - Watch for node events
+- =Shutdown()= - Gracefully shut down all components
+
+*** Data Structures
+- =Listeners map[string]*ManagedListener= - Map of service keys to listeners
+- =NodeWatcher, ServiceWatcher, EndpointWatcher *watch.QueueMgr= - Kubernetes resource watchers
+
+** Managed Listener (mgr.ManagedListener)
+
+Handles a single LoadBalancer service and its connections.
+
+*** Responsibilities
+- Create and manage TCP listeners for a service
+- Forward connections to appropriate endpoints
+- Update external IP information in the service
+- Manage the lifecycle of connections
+
+*** Key Methods
+- =Open()= - Start the listener
+- =Listening()= - Accept connections and create pipes
+- =Next()= - Select the next endpoint (round-robin)
+- =SetExternalIP()= - Update the service with external IP
+- =RemoveExternalIP()= - Remove external IP from service
+- =Close()= - Close the listener and all connections
+
+*** Data Structures
+- =pipe.Definition= - Service definition
+- =Listener net.Listener= - TCP listener
+- =Pipes map[*pipe.Pipe]bool= - Active connections
+- =Service *v1.Service= - Kubernetes service object
+- =Endpoints *v1.Endpoints= - Kubernetes endpoints object
+- =CIDR *ipmgr.CIDR= - IP address information
+
+** Pipe (pipe.Pipe)
+
+Represents a bidirectional connection between client and service endpoint.
+
+*** Responsibilities
+- Forward data between client and endpoint connections
+- Manage connection lifecycle
+- Report connection status to managed listener
+
+*** Key Methods
+- =NewPipe(Key, mapAdd, mapRm, source, sink, definition)= - Create a new pipe
+- =Connect()= - Start bidirectional data forwarding
+- =Close()= - Close connections and clean up resources
+
+*** Data Structures
+- =SourceConn net.Conn= - Client connection
+- =SinkConn net.Conn= - Endpoint connection
+- =Definition= - Service definition
+- =State uint64= - Connection state (Open/Closed)
+
+** IP Manager (ipmgr.LoadBalancerIPs)
+
+Manages IP addresses on network interfaces.
+
+*** Responsibilities
+- Add and remove IP addresses from network interfaces
+- Track reference counts for shared IP addresses
+- Ensure proper cleanup of IP addresses
+
+*** Key Methods
+- =AddAddr(IPNet, LinkDevice)= - Add an IP address to interface
+- =RemoveAddr(IPNet, LinkDevice)= - Remove an IP address from interface
+- =Keys()= - Get all managed IP addresses
+
+*** Data Structures
+- =map[string]*LinkAddr= - Map of CIDR strings to link addresses
+- =LinkAddr{*netlink.Addr, Count int}= - IP address with reference count
+
+** Kubernetes Watcher (watch.QueueMgr)
+
+Watches Kubernetes resources and processes events.
+
+*** Responsibilities
+- Watch for resource changes in Kubernetes
+- Queue events for processing
+- Handle event retries and error conditions
+
+*** Key Methods
+- =NewQueueMgr(watchTypeName, clientset)= - Create a new watcher
+- =Run(threadiness, sleepSeconds)= - Start watching and processing events
+
+*** Data Structures
+- =QueueItems chan QueueItem= - Channel for processed events
+- =QueueController= - Controller for event processing
+- =ListWatch= - Kubernetes list and watch interface
+
+* Technical Dependencies
+
+** External Libraries
+
+- =k8s.io/client-go= - Kubernetes client library
+- =k8s.io/api= - Kubernetes API types
+- =k8s.io/apimachinery= - Kubernetes helper functions
+- =github.com/vishvananda/netlink= - Network interface management
+- =github.com/davidwalter0/backoff= - Exponential backoff implementation
+- =github.com/davidwalter0/go-mutex= - Mutex implementation
+- =github.com/davidwalter0/go-cfg= - Configuration management
+
+** Internal Packages
+
+- =global= - Global configuration
+- =kubeconfig= - Kubernetes client configuration
+- =watch= - Kubernetes resource watching
+- =pipe= - Connection management
+- =ipmgr= - IP address management
+- =tracer= - Tracing and debugging
+- =helper= - Utility functions
+- =share= - Shared types and constants
+
+* Data Flow
+
+** Service Creation Flow
+1. Kubernetes API → Service Create Event → ServiceWatcher
+2. ServiceWatcher → Manager.ServiceWatch → Manager.Listen
+3. Manager.Listen → Create ManagedListener → ManagedListener.Open
+4. ManagedListener.Open → Create Listener → Update External IP
+5. Update Service in Kubernetes with external IP
+
+** Connection Flow
+1. Client → Connect to External IP:Port → ManagedListener.Accept
+2. ManagedListener.Accept → ManagedListener.Next (select endpoint)
+3. ManagedListener → Create Pipe → Pipe.Connect
+4. Pipe.Connect → Bidirectional io.Copy between connections
+5. Connection close → Pipe.Close → Remove from ManagedListener.Pipes
+
+** Service Deletion Flow
+1. Kubernetes API → Service Delete Event → ServiceWatcher
+2. ServiceWatcher → Manager.ServiceWatch → Manager.Close
+3. Manager.Close → ManagedListener.Close
+4. ManagedListener.Close → Close all pipes → Remove External IP
+5. Update Service in Kubernetes to clear external IPs
+
+* Security Considerations
+
+** Network Security
+- Operates at TCP level with no packet inspection
+- No TLS termination or authentication
+- Relies on network-level security controls
+
+** Kubernetes Permissions
+- Requires permissions to watch and update services, endpoints, and nodes
+- Should operate with minimal RBAC permissions
+- Service account should be properly secured
+
+** Host Security
+- Requires NET_ADMIN capability
+- Access to network interfaces
+- Should run as non-root user when possible
+
+* Performance Considerations
+
+** Connection Handling
+- Uses Go's concurrency for connection handling
+- Each pipe runs in its own goroutine
+- Uses standard io.Copy for efficient data transfer
+
+** Resource Usage
+- Memory usage scales with number of active connections
+- CPU usage depends on connection throughput
+- Low overhead per connection
+
+** Scalability
+- Single instance can handle multiple services
+- Connection capacity limited by host resources
+- Consider multiple instances for high availability
+
+* Future Enhancements
+
+** Health Checking
+- Active health probes for endpoints
+- Circuit breaking for failed endpoints
+- Custom health check parameters
+
+** Protocol Support
+- UDP support
+- HTTP/HTTPS with TLS termination
+- WebSocket support
+
+** Advanced Load Balancing
+- Multiple load balancing algorithms
+- Session persistence
+- Traffic splitting for canary deployments
+
+** Monitoring and Metrics
+- Prometheus metrics
+- Detailed connection statistics
+- Performance dashboards

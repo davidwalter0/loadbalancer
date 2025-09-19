@@ -46,12 +46,28 @@ func (mgr *Mgr) Listen(Service *v1.Service) {
 		log.Printf("%s listener create start", ServicePrefix)
 		managedListener.Close()
 
-		managedLBIPs.RemoveAddr(managedListener.CIDR.String(),
-			managedListener.CIDR.LinkDevice)
+		// Skip if CIDR is empty or invalid
+		if managedListener.CIDR == nil {
+			log.Printf("%s CIDR is nil, cannot create listener", ServicePrefix)
+			return
+		}
 
-		managedLBIPs.AddAddr(managedListener.CIDR.String(),
-			managedListener.CIDR.LinkDevice)
+		cidrStr := managedListener.CIDR.String()
+		if cidrStr == "/" || cidrStr == "/32" || cidrStr == "/128" {
+			log.Printf("%s invalid CIDR: %s, cannot create listener", ServicePrefix, cidrStr)
+			return
+		}
 
+		// Log the CIDR being used
+		log.Printf("%s using CIDR: %s on device: %s", ServicePrefix, cidrStr, managedListener.CIDR.LinkDevice)
+
+		// Remove old IP address if it exists
+		managedLBIPs.RemoveAddr(cidrStr, managedListener.CIDR.LinkDevice)
+
+		// Add the IP address
+		managedLBIPs.AddAddr(cidrStr, managedListener.CIDR.LinkDevice)
+
+		// Create the listener
 		managedListener.Listener = Listen(serviceKey,
 			helper.ServiceSource(Service), managedListener.Canceled)
 
@@ -84,9 +100,8 @@ func Listen(
 		10*time.Second, 1*time.Minute, 3*time.Minute, cancel)
 
 	Notify := func(err error, t time.Duration) {
-		log.Printf("%v started %s elapsed %s break after %s",
+		log.Printf("%v elapsed %s break after %s",
 			err,
-			ExpBackoff.StartTime().Format("15.04.999"),
 			DurationString(ExpBackoff.GetElapsedTime()),
 			DurationString(ExpBackoff.MaxElapsedTime))
 	}

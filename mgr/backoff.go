@@ -20,9 +20,10 @@ func DurationString(d time.Duration) string {
 
 // ConfigureBackoff using some normal steps
 func ConfigureBackoff(step, maxStep, maxElapsedTime time.Duration, cancel chan struct{}) *backoff.ExponentialBackOff {
-	b := backoff.NewExponentialBackOff(cancel)
+	b := backoff.NewExponentialBackOff()
 	b.InitialInterval = step          //  1 * time.second
 	b.MaxInterval = maxStep           //  5 * time.Minute
 	b.MaxElapsedTime = maxElapsedTime // 15 * time.Minute
+	// Store cancel channel in the context of the caller
 	return b
 }

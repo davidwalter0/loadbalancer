@@ -1,0 +1,138 @@
+#+TITLE: Health Checks
+#+AUTHOR: Claude
+#+DATE: [2025-09-11]
+
+* Health Check Feature
+
+The LoadBalancer now includes a health checking system that monitors the health of backend endpoints and routes traffic only to healthy instances.
+
+** Overview
+
+Health checks periodically verify that backend endpoints are responsive and functioning correctly. This improves reliability by:
+
+- Automatically removing unhealthy endpoints from the load balancing pool
+- Detecting when endpoints recover and adding them back to the pool
+- Providing visibility into the health status of the system
+
+** Supported Check Types
+
+The health checker supports the following types of health checks:
+
+*** TCP Health Check
+- Opens a TCP connection to the endpoint
+- Verifies connection establishment
+- Simple and efficient
+- Suitable for most services
+
+*** HTTP Health Check
+- Sends an HTTP request to a specified path
+- Verifies HTTP response status code
+- More comprehensive verification
+- Suitable for HTTP/HTTPS services
+
+** Configuration
+
+Health checks can be configured globally or per-service using annotations.
+
+*** Global Configuration
+
+Global health check settings can be configured in the LoadBalancer configuration:
+
+#+begin_src yaml
+healthChecks:
+  enabled: true
+  type: "tcp"
+  interval: "10s"
+  timeout: "5s"
+  healthyThreshold: 2
+  unhealthyThreshold: 3
+  httpPath: "/health"
+  httpStatusCodeMatch: 200
+#+end_src
+
+*** Service Annotations
+
+Individual services can override the global health check settings using annotations:
+
+#+begin_src yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-service
+  annotations:
+    loadbalancer.example.com/health-check-enabled: "true"
+    loadbalancer.example.com/health-check-type: "http"
+    loadbalancer.example.com/health-check-path: "/health"
+    loadbalancer.example.com/health-check-interval: "5s"
+    loadbalancer.example.com/health-check-timeout: "2s"
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: example-app
+#+end_src
+
+** Configuration Parameters
+
+| Parameter            | Description                                 | Default        |
+|----------------------+---------------------------------------------+----------------|
+| enabled              | Enable or disable health checks             | true           |
+| type                 | Type of health check (tcp, http)            | tcp            |
+| interval             | Time between health checks                  | 10s            |
+| timeout              | Timeout for health check requests           | 5s             |
+| healthyThreshold     | Consecutive successes to mark as healthy    | 2              |
+| unhealthyThreshold   | Consecutive failures to mark as unhealthy   | 3              |
+| httpPath             | Path for HTTP health checks                 | /health        |
+| httpStatusCodeMatch  | Expected HTTP status code                   | 200            |
+
+** Implementation Details
+
+*** Health Status
+Each endpoint can be in one of three states:
+- *Unknown*: Health check has not completed yet
+- *Healthy*: Endpoint is responsive and functioning
+- *Unhealthy*: Endpoint is unresponsive or malfunctioning
+
+*** Health Check Flow
+1. Health checker initializes with endpoints from service
+2. Periodic checks run at configured interval
+3. Success/failure counters track consecutive results
+4. Endpoints transition between states based on thresholds
+5. LoadBalancer selects only from healthy endpoints
+
+*** Failure Handling
+When all endpoints are unhealthy, the LoadBalancer will:
+1. Log a warning message
+2. Fall back to using all available endpoints
+3. Continue health checks to detect recovery
+
+*** Endpoint Updates
+When the set of endpoints changes:
+1. Health checker is updated with new endpoints
+2. Old endpoints are removed from monitoring
+3. New endpoints start in Unknown state
+4. Health checks begin immediately for new endpoints
+
+** Monitoring
+
+Health check status is logged and can be observed in the LoadBalancer logs:
+
+#+begin_src
+INFO: Health checking started for service default/example-service with 3 endpoints
+INFO: Health check: Endpoint 10.0.1.5:80 is now healthy
+WARN: Health check: Endpoint 10.0.1.6:80 is now unhealthy
+INFO: Selected healthy endpoint 10.0.1.5:80 from 2 available for service default/example-service
+#+end_src
+
+** Future Enhancements
+
+Planned enhancements for the health checking system:
+
+- Custom health check endpoints per-port
+- More sophisticated health check types (gRPC, custom scripts)
+- Health check metrics and Prometheus integration
+- Circuit breaker patterns for rapid failure detection
+- Slow start for newly healthy endpoints
+- Webhook notifications for health state changes
