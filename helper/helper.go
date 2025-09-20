@@ -62,26 +62,71 @@ func ServiceSourceIP(Service *v1.Service) (IP string) {
 	return
 }
 
-// ServiceSinks IP:NodePort from v1.Service
+// ServiceSinks returns connection endpoints for a service
+// When NodePorts are available, it returns node:nodeport pairs
+// When NodePorts aren't available, it falls back to using ClusterIP:port
 func ServiceSinks(Service *v1.Service) (Sink []string) {
+	// Try NodePort approach first
 	nodeList := nodemgr.NodeListPtr()
-	// var IP string
 	var NodePort int32
+	var hasNodePort bool
+
+	// Check if we have any NodePort
 	for _, port := range Service.Spec.Ports {
 		if port.NodePort > 0 {
 			NodePort = port.NodePort
-			var nodes []string
-			for nodes = nodeList.GetNodes(); len(nodes) == 0; nodes = nodeList.GetNodes() {
-				log.Println("Node List is empty, sleep a bit")
-				time.Sleep(time.Second)
-			}
-			for _, node := range nodes {
-				Sink = append(Sink, fmt.Sprintf("%s:%d", node, NodePort))
-			}
+			hasNodePort = true
 			break
 		}
 	}
-	return
+
+	// If we have a NodePort, build node:nodeport sinks
+	if hasNodePort {
+		// Get nodes with retry
+		var nodes []string
+		for nodes = nodeList.GetNodes(); len(nodes) == 0; nodes = nodeList.GetNodes() {
+			log.Println("Node List is empty, sleep a bit")
+			time.Sleep(time.Second)
+		}
+
+		// Build sinks list with NodePorts
+		if len(nodes) > 0 {
+			for _, node := range nodes {
+				Sink = append(Sink, fmt.Sprintf("%s:%d", node, NodePort))
+			}
+			log.Printf("Using NodePorts for service %s/%s", Service.Namespace, Service.Name)
+			return Sink
+		}
+	}
+
+	// No NodePort available or no nodes found, try ClusterIP approach
+	if hasNodePort {
+		log.Println("Service has NodePort but no nodes found, falling back to ClusterIP")
+	} else {
+		log.Println("Service has no NodePort assigned, falling back to ClusterIP")
+	}
+
+	// Get the service port
+	var servicePort int32
+	for _, port := range Service.Spec.Ports {
+		if port.Port > 0 {
+			servicePort = port.Port
+			break
+		}
+	}
+
+	// If the service has a valid ClusterIP and port, use that
+	if servicePort > 0 && Service.Spec.ClusterIP != "" && Service.Spec.ClusterIP != "None" {
+		// Use the ClusterIP:Port as the sink
+		endpoint := fmt.Sprintf("%s:%d", Service.Spec.ClusterIP, servicePort)
+		Sink = append(Sink, endpoint)
+		log.Printf("Using ClusterIP:Port %s for service %s/%s", endpoint, Service.Namespace, Service.Name)
+		return Sink
+	}
+
+	// No valid endpoints found
+	log.Printf("No valid endpoints found for service %s/%s", Service.Namespace, Service.Name)
+	return nil
 }
 
 // NodeSinks IP:NodePort from v1.Service
@@ -89,19 +134,35 @@ func NodeSinks(Service *v1.Service) (Sink []string) {
 	nodeList := nodemgr.NodeListPtr()
 	// var IP string
 	var NodePort int32
+	var hasNodePort bool
+
+	// First check if we have any NodePort
 	for _, port := range Service.Spec.Ports {
 		if port.NodePort > 0 {
 			NodePort = port.NodePort
-			var nodes []string
-			for nodes = nodeList.GetNodes(); len(nodes) == 0; nodes = nodeList.GetNodes() {
-				log.Println("Node List is empty, sleep a bit")
-				time.Sleep(time.Second)
-			}
-			for _, node := range nodes {
-				Sink = append(Sink, fmt.Sprintf("%s:%d", node, NodePort))
-			}
+			hasNodePort = true
 			break
 		}
 	}
+
+	// If we don't have a NodePort (allocateLoadBalancerNodePorts=false)
+	// then we can't build node sinks
+	if !hasNodePort {
+		log.Println("Service has no NodePort assigned, skipping node sinks")
+		return Sink
+	}
+
+	// Get nodes with retry
+	var nodes []string
+	for nodes = nodeList.GetNodes(); len(nodes) == 0; nodes = nodeList.GetNodes() {
+		log.Println("Node List is empty, sleep a bit")
+		time.Sleep(time.Second)
+	}
+
+	// Build sinks list
+	for _, node := range nodes {
+		Sink = append(Sink, fmt.Sprintf("%s:%d", node, NodePort))
+	}
+
 	return
 }

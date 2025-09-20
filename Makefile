@@ -24,6 +24,11 @@ CURRENT_DIR := $(notdir $(patsubst %/,%,$(dir $(MAKEFILE_DIR))))
 export DIR=$(MAKEFILE_DIR)
 export APPL=$(notdir $(PWD))
 export IMAGE=$(notdir $(PWD))
+# Set default DOCKER_USER if not defined
+ifeq ($(DOCKER_USER),)
+DOCKER_USER := davidwalter0
+export DOCKER_USER
+endif
 # extract tag from latest commit, use tag for version
 export gittag=$$(git tag -l --contains $(git log --pretty="format:%h"  -n1))
 export TAG=$(shell if git diff --quiet --ignore-submodules HEAD && [[ -n $(gittag) ]]; then echo $(gittag); else echo "canary"; fi)
@@ -98,7 +103,7 @@ install: .dep/install
 image: .dep/image-$(DOCKER_USER)-$(IMAGE)-latest .dep/tag-$(DOCKER_USER)-$(IMAGE)-${TAG}
 
 .dep/image-$(DOCKER_USER)-$(IMAGE)-latest: .dep $(target)
-	docker build --tag=$(DOCKER_USER)/$(IMAGE):latest .
+	docker buildx build --progress=plain --tag=$(DOCKER_USER)/$(IMAGE):latest .
 	touch $@ 
 
 tag: info .dep .dep/tag-$(DOCKER_USER)-$(IMAGE)-$(TAG)

@@ -92,13 +92,28 @@ func SinkPort(Service *v1.Service, ep *v1.Endpoints) (port Port) {
 		var ports Ports
 		if ep != nil {
 			ports = EndpointSubsetPorts(ep)
-			port = ports[0]
+			if len(ports) > 0 {
+				port = ports[0]
+			}
 		}
 	} else {
+		// Look for NodePort in the service
+		hasNodePort := false
 		for _, portObj := range Service.Spec.Ports {
 			if portObj.NodePort > 0 {
 				port = Port(portObj.NodePort)
+				hasNodePort = true
 				break
+			}
+		}
+
+		// If no NodePort is found, use the service port instead
+		if !hasNodePort {
+			for _, portObj := range Service.Spec.Ports {
+				if portObj.Port > 0 {
+					port = Port(portObj.Port)
+					break
+				}
 			}
 		}
 	}

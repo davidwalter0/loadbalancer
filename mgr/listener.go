@@ -225,19 +225,30 @@ func (ml *ManagedListener) Next() (sink string) {
 		var sinks []string
 		if !InCluster() {
 			sinks = helper.ServiceSinks(ml.Service)
-			n = atomic.AddUint64(&ml.n, 1) % uint64(len(sinks))
-			sink = sinks[n]
+			if len(sinks) > 0 {
+				n = atomic.AddUint64(&ml.n, 1) % uint64(len(sinks))
+				sink = sinks[n]
+			} else {
+				log.Printf("Warning: No available service sinks for %s", ml.Key)
+				return ""
+			}
 		} else {
 			// Use health checker if enabled to select only healthy endpoints
 			if ml.HealthChecker != nil && ml.HealthChecker.IsEnabled() && len(ml.Ports) > 0 {
 				// Get only healthy endpoints
 				healthyAddresses := ml.HealthChecker.GetHealthyEndpoints()
-				
+
 				// If no healthy endpoints, fall back to all endpoints
 				if len(healthyAddresses) == 0 {
 					if ml.Debug {
 						log.Printf("Warning: No healthy endpoints for service %s, using all available endpoints", ml.Key)
 					}
+
+					if len(ml.IPs) == 0 {
+						log.Printf("Error: No IP addresses available for service %s", ml.Key)
+						return ""
+					}
+
 					n = atomic.AddUint64(&ml.n, 1) % uint64(len(ml.IPs))
 					if len(ml.Ports) > 0 {
 						sink = Address(ml.IPs[n], ml.Port)
@@ -246,14 +257,19 @@ func (ml *ManagedListener) Next() (sink string) {
 					// Select from healthy endpoints
 					n = atomic.AddUint64(&ml.n, 1) % uint64(len(healthyAddresses))
 					sink = healthyAddresses[n]
-					
+
 					if ml.Debug {
-						log.Printf("Selected healthy endpoint %s from %d available for service %s", 
+						log.Printf("Selected healthy endpoint %s from %d available for service %s",
 							sink, len(healthyAddresses), ml.Key)
 					}
 				}
 			} else {
 				// Standard round-robin selection without health checks
+				if len(ml.IPs) == 0 {
+					log.Printf("Error: No IP addresses available for service %s", ml.Key)
+					return ""
+				}
+
 				n = atomic.AddUint64(&ml.n, 1) % uint64(len(ml.IPs))
 				if len(ml.Ports) > 0 {
 					sink = Address(ml.IPs[n], ml.Port)
