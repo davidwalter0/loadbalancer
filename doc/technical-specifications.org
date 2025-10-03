@@ -1,6 +1,7 @@
 #+TITLE: Technical Specifications
-#+AUTHOR: Claude
+#+AUTHOR: David Walter
 #+DATE: [2025-09-11]
+#+INCLUDE: ~/org/header-portrait.org
 
 * System Requirements
 
@@ -35,12 +36,14 @@
 The central controller component that coordinates the entire system.
 
 *** Responsibilities
+
 - Initialize and manage service, endpoint, and node watchers
 - Create and manage listeners for LoadBalancer services
 - Handle lifecycle events for services and endpoints
 - Coordinate graceful shutdown of all components
 
 *** Key Methods
+
 - =NewMgr(EnvCfg, Clientset)= - Create a new Manager
 - =Run()= - Start the manager and all watchers
 - =Listen(Service)= - Create or update a listener for a service
@@ -50,20 +53,25 @@ The central controller component that coordinates the entire system.
 - =Shutdown()= - Gracefully shut down all components
 
 *** Data Structures
-- =Listeners map[string]*ManagedListener= - Map of service keys to listeners
-- =NodeWatcher, ServiceWatcher, EndpointWatcher *watch.QueueMgr= - Kubernetes resource watchers
+
+- =Listeners map[string]*ManagedListener= - Map of service keys to
+  listeners
+- =NodeWatcher, ServiceWatcher, EndpointWatcher *watch.QueueMgr= -
+  Kubernetes resource watchers
 
 ** Managed Listener (mgr.ManagedListener)
 
 Handles a single LoadBalancer service and its connections.
 
 *** Responsibilities
+
 - Create and manage TCP listeners for a service
 - Forward connections to appropriate endpoints
 - Update external IP information in the service
 - Manage the lifecycle of connections
 
 *** Key Methods
+
 - =Open()= - Start the listener
 - =Listening()= - Accept connections and create pipes
 - =Next()= - Select the next endpoint (round-robin)
@@ -72,6 +80,7 @@ Handles a single LoadBalancer service and its connections.
 - =Close()= - Close the listener and all connections
 
 *** Data Structures
+
 - =pipe.Definition= - Service definition
 - =Listener net.Listener= - TCP listener
 - =Pipes map[*pipe.Pipe]bool= - Active connections
@@ -84,16 +93,19 @@ Handles a single LoadBalancer service and its connections.
 Represents a bidirectional connection between client and service endpoint.
 
 *** Responsibilities
+
 - Forward data between client and endpoint connections
 - Manage connection lifecycle
 - Report connection status to managed listener
 
 *** Key Methods
+
 - =NewPipe(Key, mapAdd, mapRm, source, sink, definition)= - Create a new pipe
 - =Connect()= - Start bidirectional data forwarding
 - =Close()= - Close connections and clean up resources
 
 *** Data Structures
+
 - =SourceConn net.Conn= - Client connection
 - =SinkConn net.Conn= - Endpoint connection
 - =Definition= - Service definition
@@ -104,16 +116,19 @@ Represents a bidirectional connection between client and service endpoint.
 Manages IP addresses on network interfaces.
 
 *** Responsibilities
+
 - Add and remove IP addresses from network interfaces
 - Track reference counts for shared IP addresses
 - Ensure proper cleanup of IP addresses
 
 *** Key Methods
+
 - =AddAddr(IPNet, LinkDevice)= - Add an IP address to interface
 - =RemoveAddr(IPNet, LinkDevice)= - Remove an IP address from interface
 - =Keys()= - Get all managed IP addresses
 
 *** Data Structures
+
 - =map[string]*LinkAddr= - Map of CIDR strings to link addresses
 - =LinkAddr{*netlink.Addr, Count int}= - IP address with reference count
 
@@ -122,15 +137,18 @@ Manages IP addresses on network interfaces.
 Watches Kubernetes resources and processes events.
 
 *** Responsibilities
+
 - Watch for resource changes in Kubernetes
 - Queue events for processing
 - Handle event retries and error conditions
 
 *** Key Methods
+
 - =NewQueueMgr(watchTypeName, clientset)= - Create a new watcher
 - =Run(threadiness, sleepSeconds)= - Start watching and processing events
 
 *** Data Structures
+
 - =QueueItems chan QueueItem= - Channel for processed events
 - =QueueController= - Controller for event processing
 - =ListWatch= - Kubernetes list and watch interface
@@ -161,6 +179,7 @@ Watches Kubernetes resources and processes events.
 * Data Flow
 
 ** Service Creation Flow
+
 1. Kubernetes API → Service Create Event → ServiceWatcher
 2. ServiceWatcher → Manager.ServiceWatch → Manager.Listen
 3. Manager.Listen → Create ManagedListener → ManagedListener.Open
@@ -168,6 +187,7 @@ Watches Kubernetes resources and processes events.
 5. Update Service in Kubernetes with external IP
 
 ** Connection Flow
+
 1. Client → Connect to External IP:Port → ManagedListener.Accept
 2. ManagedListener.Accept → ManagedListener.Next (select endpoint)
 3. ManagedListener → Create Pipe → Pipe.Connect
@@ -175,6 +195,7 @@ Watches Kubernetes resources and processes events.
 5. Connection close → Pipe.Close → Remove from ManagedListener.Pipes
 
 ** Service Deletion Flow
+
 1. Kubernetes API → Service Delete Event → ServiceWatcher
 2. ServiceWatcher → Manager.ServiceWatch → Manager.Close
 3. Manager.Close → ManagedListener.Close
@@ -184,16 +205,19 @@ Watches Kubernetes resources and processes events.
 * Security Considerations
 
 ** Network Security
+
 - Operates at TCP level with no packet inspection
 - No TLS termination or authentication
 - Relies on network-level security controls
 
 ** Kubernetes Permissions
+
 - Requires permissions to watch and update services, endpoints, and nodes
 - Should operate with minimal RBAC permissions
 - Service account should be properly secured
 
 ** Host Security
+
 - Requires NET_ADMIN capability
 - Access to network interfaces
 - Should run as non-root user when possible
@@ -201,16 +225,19 @@ Watches Kubernetes resources and processes events.
 * Performance Considerations
 
 ** Connection Handling
+
 - Uses Go's concurrency for connection handling
 - Each pipe runs in its own goroutine
 - Uses standard io.Copy for efficient data transfer
 
 ** Resource Usage
+
 - Memory usage scales with number of active connections
 - CPU usage depends on connection throughput
 - Low overhead per connection
 
 ** Scalability
+
 - Single instance can handle multiple services
 - Connection capacity limited by host resources
 - Consider multiple instances for high availability
@@ -218,21 +245,25 @@ Watches Kubernetes resources and processes events.
 * Future Enhancements
 
 ** Health Checking
+
 - Active health probes for endpoints
 - Circuit breaking for failed endpoints
 - Custom health check parameters
 
 ** Protocol Support
+
 - UDP support
 - HTTP/HTTPS with TLS termination
 - WebSocket support
 
 ** Advanced Load Balancing
+
 - Multiple load balancing algorithms
 - Session persistence
 - Traffic splitting for canary deployments
 
 ** Monitoring and Metrics
+
 - Prometheus metrics
 - Detailed connection statistics
 - Performance dashboards

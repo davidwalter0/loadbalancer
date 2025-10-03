@@ -1,6 +1,6 @@
 /*
 
-Copyright 2018 David Walter.
+Copyright 2018-2025 David Walter.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 
 	"github.com/vishvananda/netlink"
 )
@@ -147,5 +148,83 @@ func (c *CIDR) CIDRDevString() string {
 		return fmt.Sprintf("%s/%s %s", c.IP, c.Bits, c.LinkDevice)
 	} else {
 		return fmt.Sprintf("%s/%s", c.IP, c.Bits)
+	}
+}
+
+// IPPool manages IP allocation from a CIDR range
+type IPPool struct {
+	cidr      *net.IPNet
+	allocated map[string]bool
+	mu        sync.Mutex
+}
+
+// NewIPPool creates a new IP pool from a CIDR string
+func NewIPPool(cidr string) (*IPPool, error) {
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid CIDR: %w", err)
+	}
+
+	return &IPPool{
+		cidr:      ipNet,
+		allocated: make(map[string]bool),
+	}, nil
+}
+
+// Allocate gets the next available IP from the pool
+func (p *IPPool) Allocate() (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Iterate through all IPs in the CIDR range
+	for ip := p.cidr.IP.Mask(p.cidr.Mask); p.cidr.Contains(ip); incIP(ip) {
+		ipStr := ip.String()
+
+		// Skip network and broadcast addresses for /28 and smaller
+		if p.isNetworkOrBroadcast(ip) {
+			continue
+		}
+
+		// Check if already allocated
+		if !p.allocated[ipStr] {
+			p.allocated[ipStr] = true
+			return ipStr, nil
+		}
+	}
+
+	return "", fmt.Errorf("no available IPs in pool")
+}
+
+// Release returns an IP to the pool
+func (p *IPPool) Release(ip string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.allocated, ip)
+}
+
+// isNetworkOrBroadcast checks if IP is network or broadcast address
+func (p *IPPool) isNetworkOrBroadcast(ip net.IP) bool {
+	// Check if it's the network address
+	if ip.Equal(p.cidr.IP.Mask(p.cidr.Mask)) {
+		return true
+	}
+
+	// Check if it's the broadcast address
+	broadcast := make(net.IP, len(p.cidr.IP))
+	copy(broadcast, p.cidr.IP)
+	for i := range broadcast {
+		broadcast[i] |= ^p.cidr.Mask[i]
+	}
+
+	return ip.Equal(broadcast)
+}
+
+// incIP increments an IP address
+func incIP(ip net.IP) {
+	for j := len(ip) - 1; j >= 0; j-- {
+		ip[j]++
+		if ip[j] > 0 {
+			break
+		}
 	}
 }

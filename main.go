@@ -56,7 +56,7 @@ var dumpSignals = make(chan os.Signal, 1)
 
 // Message of repo info
 var Message = `
-Copyright 2018 David Walter.
+Copyright 2018-2025 David Walter.
 
 `
 

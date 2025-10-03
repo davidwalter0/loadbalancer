@@ -1,32 +1,40 @@
 #+TITLE: End-to-End Testing Framework
-#+AUTHOR: Claude
+#+AUTHOR: David Walter
 #+DATE: [2025-09-11]
+#+INCLUDE: ~/org/header-portrait.org
 
 * Overview
 
-The loadbalancer project includes a comprehensive end-to-end (E2E) testing framework that verifies the functionality of the loadbalancer in a real Kubernetes environment. This document describes how to use and extend the E2E testing framework.
+The loadbalancer project includes a comprehensive end-to-end (E2E)
+testing framework that verifies the functionality of the loadbalancer
+in a real Kubernetes environment. This document describes how to use
+and extend the E2E testing framework.
 
 * Test Architecture
 
 The E2E testing framework is designed with the following components:
 
 ** Framework Core (~test/e2e/framework/~)
+
 - Manages test environment setup and teardown
 - Provides utilities for interacting with Kubernetes resources
 - Handles loadbalancer process management
 - Implements common test operations
 
 ** Test Scenarios (~test/e2e/scenarios/~)
+
 - Implements specific test cases
 - Validates different aspects of loadbalancer functionality
 - Each scenario is independent and self-contained
 
 ** Utility Functions (~test/e2e/utils/~)
+
 - HTTP client for testing web services
 - Network utilities for testing connectivity
 - Helper functions for common operations
 
 ** Test Runner (~test/e2e/e2e_test.go~)
+
 - Coordinates test execution
 - Handles command-line flags and configuration
 - Manages test lifecycle
@@ -54,15 +62,15 @@ go test ./test/e2e -v
 
 The E2E tests can be configured with the following command-line flags:
 
-| Flag              | Description                                        | Default                      |
-|-------------------+----------------------------------------------------+------------------------------|
-| ~--kubeconfig~    | Path to kubeconfig file                            | ~/.kube/config              |
-| ~--namespace~     | Namespace to use for tests                         | auto-generated               |
-| ~--iface~         | Network interface to use for tests                 | eth0                         |
-| ~--lb-binary~     | Path to loadbalancer binary                        | auto-detected                |
-| ~--test-filter~   | Filter for test names to run (comma-separated)     | empty (run all)              |
-| ~--cleanup-on-fail~ | Clean up resources even when tests fail           | true                         |
-| ~--cluster-tests~ | Run tests that require a Kubernetes cluster        | true                         |
+| Flag                | Description                                    | Default         |
+|---------------------+------------------------------------------------+-----------------|
+| ~--kubeconfig~      | Path to kubeconfig file                        | ~/.kube/config  |
+| ~--namespace~       | Namespace to use for tests                     | auto-generated  |
+| ~--iface~           | Network interface to use for tests             | eth0            |
+| ~--lb-binary~       | Path to loadbalancer binary                    | auto-detected   |
+| ~--test-filter~     | Filter for test names to run (comma-separated) | empty (run all) |
+| ~--cleanup-on-fail~ | Clean up resources even when tests fail        | true            |
+| ~--cluster-tests~   | Run tests that require a Kubernetes cluster    | true            |
 
 Example with configuration options:
 
@@ -105,24 +113,28 @@ go test ./test/e2e -v
 The E2E testing framework includes the following test scenarios:
 
 ** BasicConnectivity
+
 Verifies that the loadbalancer can forward traffic to a backend service.
 - Creates a simple service and backend pod
 - Waits for the service to get an external IP
 - Verifies connectivity to the service
 
 ** MultipleServices
+
 Verifies that the loadbalancer can handle multiple services simultaneously.
 - Creates multiple services and backend pods
 - Verifies connectivity to all services
 - Performs load testing on all services simultaneously
 
 ** ServiceUpdates
+
 Verifies that the loadbalancer handles service updates correctly.
 - Creates a service and backend pod
 - Updates service properties
 - Verifies the loadbalancer adapts to the changes
 
 ** EndpointChanges
+
 Verifies that the loadbalancer handles endpoint changes correctly.
 - Creates a service with one backend pod
 - Adds additional backend pods
@@ -131,12 +143,14 @@ Verifies that the loadbalancer handles endpoint changes correctly.
 - Verifies the loadbalancer adapts to all changes
 
 ** HealthCheck
+
 Verifies the loadbalancer's health check functionality.
 - Creates healthy and unhealthy backend pods
 - Verifies traffic is only routed to healthy pods
 - Tests recovery when pods transition between healthy and unhealthy states
 
 ** LoadBalancing
+
 Verifies the load distribution across multiple backends.
 - Creates multiple backend pods with unique identifiers
 - Sends traffic to the service
@@ -144,6 +158,7 @@ Verifies the load distribution across multiple backends.
 - Verifies the load is reasonably balanced
 
 ** ShutdownAndRestart
+
 Verifies that the loadbalancer can be shutdown and restarted without issues.
 - Creates a service and verifies connectivity
 - Stops the loadbalancer
@@ -152,6 +167,7 @@ Verifies that the loadbalancer can be shutdown and restarted without issues.
 - Verifies connectivity is restored
 
 ** HighAvailabilityConfiguration
+
 Verifies the loadbalancer's high availability features.
 - Tests failover scenarios
 - Verifies configuration persistence
@@ -294,21 +310,25 @@ echo "E2E tests passed!"
 * Troubleshooting Common Issues
 
 ** Tests fail to create resources
+
 - Verify your kubeconfig is correct
 - Ensure you have necessary permissions in the cluster
 - Check if the namespace already exists and can't be created
 
 ** Loadbalancer fails to start
+
 - Ensure the loadbalancer binary is built correctly
 - Check if the network interface specified exists
 - Verify no other process is using the same ports
 
 ** Tests timeout waiting for external IP
+
 - Verify your cluster supports LoadBalancer services
 - Check if you have a cloud provider or MetalLB configured
 - Inspect the service status for any error conditions
 
 ** Health check tests fail
+
 - Increase the timeout values if your environment is slow
 - Verify the health check settings in service annotations
 - Check if network policies might be blocking health check requests

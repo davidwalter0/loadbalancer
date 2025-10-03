@@ -1,12 +1,16 @@
 #+TITLE: User Guide
-#+AUTHOR: Claude
+#+AUTHOR: David Walter
 #+DATE: [2025-09-11]
+#+INCLUDE: ~/org/header-portrait.org
 
 * Introduction
 
-The Kubernetes External LoadBalancer provides network connectivity to Kubernetes services of type LoadBalancer by assigning external IP addresses and forwarding traffic to service endpoints.
+The Kubernetes External LoadBalancer provides network connectivity to
+Kubernetes services of type LoadBalancer by assigning external IP
+addresses and forwarding traffic to service endpoints.
 
-This guide covers installation, configuration, usage, and troubleshooting.
+This guide covers installation, configuration, usage, and
+troubleshooting.
 
 * Installation
 
@@ -70,12 +74,12 @@ helm install external-lb loadbalancer/external-loadbalancer \
 
 The loadbalancer supports the following configuration parameters:
 
-| Parameter          | Description                                 | Default                  | Required |
-|--------------------+---------------------------------------------+--------------------------+----------|
-| =KUBECONFIG=       | Path to kubeconfig file                     | =cluster/auth/kubeconfig= | No       |
-| =LINKDEVICE=       | Network device for external IPs             | -                        | Yes      |
-| =DEBUG=            | Enable debug logging                        | =false=                  | No       |
-| =KUBERNETES=       | Use Kubernetes dynamic endpoints            | =true=                   | No       |
+| Parameter    | Description                      | Default                   | Required |
+|--------------+----------------------------------+---------------------------+----------|
+| =KUBECONFIG= | Path to kubeconfig file          | =cluster/auth/kubeconfig= | No       |
+| =LINKDEVICE= | Network device for external IPs  | -                         | Yes      |
+| =DEBUG=      | Enable debug logging             | =false=                   | No       |
+| =KUBERNETES= | Use Kubernetes dynamic endpoints | =true=                    | No       |
 
 ** Configuration Methods
 
@@ -159,10 +163,10 @@ The service should show an external IP assigned by the loadbalancer.
 
 The loadbalancer supports the following service annotations:
 
-| Annotation                           | Description                        | Default |
-|--------------------------------------+------------------------------------+---------|
-| =loadbalancer.example.com/ip=        | Request a specific external IP     | Auto    |
-| =loadbalancer.example.com/internal=  | Create an internal-only loadbalancer | =false= |
+| Annotation                          | Description                          | Default |
+|-------------------------------------+--------------------------------------+---------|
+| =loadbalancer.example.com/ip=       | Request a specific external IP       | Auto    |
+| =loadbalancer.example.com/internal= | Create an internal-only loadbalancer | =false= |
 
 Example:
 
@@ -384,14 +388,14 @@ data:
 
 ** Command Line Options
 
-| Option                 | Description                                | Default |
-|------------------------+--------------------------------------------+---------|
-| =--kubeconfig=         | Path to kubeconfig file                    | cluster/auth/kubeconfig |
-| =--linkdevice=         | Network device for external IPs            | -       |
-| =--debug=              | Enable debug logging                       | false   |
-| =--kubernetes=         | Use Kubernetes dynamic endpoints           | true    |
-| =--help=               | Show help message                          | -       |
-| =--version=            | Show version information                   | -       |
+| Option         | Description                      | Default                 |
+|----------------+----------------------------------+-------------------------|
+| =--kubeconfig= | Path to kubeconfig file          | cluster/auth/kubeconfig |
+| =--linkdevice= | Network device for external IPs  | -                       |
+| =--debug=      | Enable debug logging             | false                   |
+| =--kubernetes= | Use Kubernetes dynamic endpoints | true                    |
+| =--help=       | Show help message                | -                       |
+| =--version=    | Show version information         | -                       |
 
 ** Environment Variables
 
@@ -399,8 +403,8 @@ All command line options have equivalent environment variables with the same nam
 
 ** Files and Directories
 
-| Path                | Description                                |
-|---------------------+--------------------------------------------|
-| =/etc/loadbalancer= | Default configuration directory            |
-| =/var/log/loadbalancer= | Log directory                          |
-| =/var/run/loadbalancer.pid= | PID file                          |
+| Path                        | Description                     |
+|-----------------------------+---------------------------------|
+| =/etc/loadbalancer=         | Default configuration directory |
+| =/var/log/loadbalancer=     | Log directory                   |
+| =/var/run/loadbalancer.pid= | PID file                        |

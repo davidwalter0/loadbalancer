@@ -1,6 +1,6 @@
 /*
 
-Copyright 2018 David Walter.
+Copyright 2018-2025 David Walter.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -34,6 +34,9 @@ var LinkDevice string
 
 // DefaultCIDR default link device to use for external ip addresses
 var DefaultCIDR *CIDR
+
+// IPPoolInstance global IP pool for allocating IPs from the CIDR range
+var IPPoolInstance *IPPool
 
 // Debug set by initializer
 var Debug bool

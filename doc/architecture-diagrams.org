@@ -1,13 +1,16 @@
 #+TITLE: Architecture Diagrams
-#+AUTHOR: Claude
+#+AUTHOR: David Walter
 #+DATE: [2025-09-11]
+#+INCLUDE: ~/org/header-portrait.org
 
 This document contains architecture diagrams for the Kubernetes External LoadBalancer.
 
 * System Components Diagram
 
-#+begin_src plantuml :file system-components.png
+#+begin_src plantuml :file system-components.png :results file
 @startuml
+scale 0.75
+
 package "LoadBalancer" {
   class Mgr {
     +Listeners map[string]*ManagedListener
@@ -78,10 +81,15 @@ IPManager -- CIDR : uses
 @enduml
 #+end_src
 
+#+RESULTS:
+[[file:system-components.png]]
+
 * Operational Flow
 
-#+begin_src plantuml :file operational-flow.png
+#+begin_src plantuml :file operational-flow.png :results file
 @startuml
+scale 0.8
+
 actor "Kubernetes API" as KubeAPI
 participant Manager as Mgr
 participant ManagedListener as ML
@@ -113,14 +121,17 @@ ML -> KubeAPI: Clear Service externalIPs
 
 * Network Architecture
 
-#+begin_src plantuml :file network-architecture.png
+#+begin_src plantuml :file basic-network-architecture.png :results file
 @startuml
 node Client
 node "External IP on Network Interface" as ExtIP
-node LoadBalancer as LB
-node "Endpoint 1" as EP1
-node "Endpoint 2" as EP2
-node "Endpoint 3" as EP3
+
+package "Kubernetes Cluster" {
+  node "LoadBalancer" as LB
+  node "Endpoint 1" as EP1
+  node "Endpoint 2" as EP2
+  node "Endpoint 3" as EP3
+}
 
 Client -- ExtIP : TCP
 ExtIP -- LB : Forward
@@ -128,18 +139,12 @@ LB -- EP1 : Round Robin
 LB -- EP2 : Round Robin
 LB -- EP3 : Round Robin
 
-package "Kubernetes Cluster" {
-  LB
-  EP1
-  EP2
-  EP3
-}
 @enduml
 #+end_src
 
 * Component Interactions
 
-#+begin_src plantuml :file component-interactions.png
+#+begin_src plantuml :file component-interactions.png :results file
 @startuml
 [main.go] --> [Mgr]
 [Mgr] --> [ServiceWatcher]
@@ -161,7 +166,7 @@ package "Kubernetes Cluster" {
 
 * Data Flow
 
-#+begin_src plantuml :file data-flow.png
+#+begin_src plantuml :file data-flow.png :results file
 @startuml
 [Client Request] --> [LoadBalancer]
 [LoadBalancer] --> [Round Robin Selection]
@@ -176,7 +181,7 @@ package "Kubernetes Cluster" {
 
 * Initialization Sequence
 
-#+begin_src plantuml :file initialization-sequence.png
+#+begin_src plantuml :file initialization-sequence.png :results file
 @startuml
 participant Main
 participant Kubeconfig
@@ -198,7 +203,7 @@ Mgr -> Mgr: Handle Event
 
 * State Transitions
 
-#+begin_src plantuml :file state-transitions.png
+#+begin_src plantuml :file state-transitions.png :results file
 @startuml
 [*] --> Running
 Running --> [*]: Shutdown

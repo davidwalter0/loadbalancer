@@ -1,6 +1,6 @@
 /*
 
-Copyright 2018 David Walter.
+Copyright 2018-2025 David Walter.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -101,4 +101,12 @@ func Initialize() {
 	ipmgr.Bits = ipmgr.DefaultCIDR.Bits
 	ipmgr.LinkDevice = linkDevice
 	ipmgr.Debug = global.Cfg().Debug
+
+	// Initialize IP pool from the CIDR range
+	var err error
+	ipmgr.IPPoolInstance, err = ipmgr.NewIPPool(ipmgr.DefaultCIDR.String())
+	if err != nil {
+		log.Fatalf("Failed to create IP pool from CIDR %s: %v", ipmgr.DefaultCIDR.String(), err)
+	}
+	log.Printf("Initialized IP pool for CIDR: %s", ipmgr.DefaultCIDR.String())
 }

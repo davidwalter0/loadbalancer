@@ -1,6 +1,7 @@
 #+TITLE: Migration to go-cfg/v3 and Kubernetes API Compatibility Fixes
-#+AUTHOR: Claude
+#+AUTHOR: David Walter
 #+DATE: [2025-09-11]
+#+INCLUDE: ~/org/header-portrait.org
 
 * Summary
 

@@ -1,14 +1,18 @@
 #+TITLE: Health Checks
-#+AUTHOR: Claude
+#+AUTHOR: David Walter
 #+DATE: [2025-09-11]
+#+INCLUDE: ~/org/header-portrait.org
 
 * Health Check Feature
 
-The LoadBalancer now includes a health checking system that monitors the health of backend endpoints and routes traffic only to healthy instances.
+The LoadBalancer now includes a health checking system that monitors
+the health of backend endpoints and routes traffic only to healthy
+instances.
 
 ** Overview
 
-Health checks periodically verify that backend endpoints are responsive and functioning correctly. This improves reliability by:
+Health checks periodically verify that backend endpoints are
+responsive and functioning correctly. This improves reliability by:
 
 - Automatically removing unhealthy endpoints from the load balancing pool
 - Detecting when endpoints recover and adding them back to the pool
@@ -19,12 +23,14 @@ Health checks periodically verify that backend endpoints are responsive and func
 The health checker supports the following types of health checks:
 
 *** TCP Health Check
+
 - Opens a TCP connection to the endpoint
 - Verifies connection establishment
 - Simple and efficient
 - Suitable for most services
 
 *** HTTP Health Check
+
 - Sends an HTTP request to a specified path
 - Verifies HTTP response status code
 - More comprehensive verification
@@ -32,11 +38,13 @@ The health checker supports the following types of health checks:
 
 ** Configuration
 
-Health checks can be configured globally or per-service using annotations.
+Health checks can be configured globally or per-service using
+annotations.
 
 *** Global Configuration
 
-Global health check settings can be configured in the LoadBalancer configuration:
+Global health check settings can be configured in the LoadBalancer
+configuration:
 
 #+begin_src yaml
 healthChecks:
@@ -90,12 +98,14 @@ spec:
 ** Implementation Details
 
 *** Health Status
+
 Each endpoint can be in one of three states:
 - *Unknown*: Health check has not completed yet
 - *Healthy*: Endpoint is responsive and functioning
 - *Unhealthy*: Endpoint is unresponsive or malfunctioning
 
 *** Health Check Flow
+
 1. Health checker initializes with endpoints from service
 2. Periodic checks run at configured interval
 3. Success/failure counters track consecutive results
@@ -103,12 +113,14 @@ Each endpoint can be in one of three states:
 5. LoadBalancer selects only from healthy endpoints
 
 *** Failure Handling
+
 When all endpoints are unhealthy, the LoadBalancer will:
 1. Log a warning message
 2. Fall back to using all available endpoints
 3. Continue health checks to detect recovery
 
 *** Endpoint Updates
+
 When the set of endpoints changes:
 1. Health checker is updated with new endpoints
 2. Old endpoints are removed from monitoring

@@ -1,6 +1,7 @@
 #+TITLE: Kubernetes External LoadBalancer
-#+AUTHOR: Claude
+#+AUTHOR: David Walter
 #+DATE: [2025-09-11]
+#+INCLUDE: ~/org/header-portrait.org
 
 A Kubernetes-native network proxy designed to provide external connectivity to Kubernetes services of type LoadBalancer.
 
@@ -21,27 +22,32 @@ This project implements an external LoadBalancer for Kubernetes that:
 The system consists of several key components:
 
 *** Manager (Mgr)
+
 - Central controller that watches Kubernetes resources
 - Creates and manages listeners for each LoadBalancer service
 - Coordinates shutdown and cleanup
 
 *** ManagedListener
+
 - Handles a single LoadBalancer service
 - Creates and manages network listeners
 - Forwards connections to service endpoints
 - Updates external IPs on service objects
 
 *** Pipe
+
 - Represents a bidirectional connection between client and service
 - Handles data forwarding between connections
 - Manages connection lifecycle
 
 *** IP Manager
+
 - Manages external IP addresses on network interfaces
 - Tracks IP address usage with reference counting
 - Handles adding and removing IPs from network devices
 
 *** Kubernetes Watchers
+
 - Watch for changes in Services, Endpoints, and Nodes
 - Process events using work queues and controllers
 - Notify manager of relevant changes
@@ -49,22 +55,26 @@ The system consists of several key components:
 ** Communication Flow
 
 *** Service Discovery
+
 - Kubernetes API → Watch Queue → Manager → ManagedListener
 - Service events trigger listener creation/removal
 - Endpoint events update target destinations
 
 *** Connection Path
+
 - Client → External IP → ManagedListener → Service Endpoint
 - TCP connections are accepted and forwarded to backends
 - Round-robin load balancing across endpoints
 
 *** IP Management
+
 - Service creation → IP assignment → Network interface configuration
 - Service deletion → IP removal (with reference counting)
 
 * Installation
 
 ** Prerequisites
+
 - Kubernetes cluster (v1.10 or higher)
 - Network interface for external IP addresses
 - =kubeconfig= with appropriate permissions

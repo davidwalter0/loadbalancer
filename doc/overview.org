@@ -1,6 +1,7 @@
 #+TITLE: Kubernetes LoadBalancer System Analysis
-#+AUTHOR: Claude
+#+AUTHOR: David Walter
 #+DATE: [2025-09-11]
+#+INCLUDE: ~/org/header-portrait.org
 
 * System Overview
 

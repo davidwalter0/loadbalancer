@@ -1,6 +1,7 @@
 #+TITLE: E2E Testing Implementation Summary
-#+AUTHOR: Claude
+#+AUTHOR: David Walter
 #+DATE: [2025-09-11]
+#+INCLUDE: ~/org/header-portrait.org
 
 * E2E Testing Implementation
 

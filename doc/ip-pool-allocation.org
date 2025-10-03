@@ -1,0 +1,717 @@
+#+TITLE: Load Balancer IP Pool Allocation
+#+AUTHOR: David Walter
+#+DATE: 2025-10-01
+#+OPTIONS: toc:2 num:t
+#+INCLUDE: ~/org/header-portrait.org
+
+* Overview
+
+The load balancer implements dynamic IP allocation from a CIDR range to support
+multiple Kubernetes services without manual IP assignment. When an IP address is
+already in use, the system automatically allocates the next available IP from
+the configured CIDR pool.
+
+** Diagrams in This Document
+
+| Diagram                        | File                        | Description                                      |
+|--------------------------------+-----------------------------+--------------------------------------------------|
+| Network Architecture           | network-architecture.png    | Shows host/k3d network topology                  |
+| Connection Flow                | connection-flow.png         | Sequence diagram of TCP proxy flow               |
+| Service Binding Flow           | service-binding-flow.png    | Activity diagram of IP allocation with retry     |
+| IP Lifecycle                   | ip-lifecycle.png            | State diagram of IP allocation/release lifecycle |
+
+To generate diagrams, position cursor on each =#+begin_src plantuml= block and press =C-c C-c=.
+
+* Architecture
+
+** Network Architecture Diagram
+
+#+begin_src plantuml :file network-architecture.png :results file
+@startuml
+scale 0.7
+
+package "Host Network Stack" {
+  rectangle "br-2b0c6c745dc4\n172.21.0.1/16" as bridge #LightBlue
+  rectangle "enx803f5df6e873\n192.168.0.x" as external #LightGreen
+  rectangle "LoadBalancer IPs\n192.168.0.225-238" as lbips #Yellow
+}
+
+package "k3d Container\n172.21.0.2" {
+  rectangle "cni0\n10.42.0.1/24" as cni #LightCoral
+  rectangle "Pod IPs\n10.42.0.x, 10.43.x.x" as pods #Pink
+}
+
+cloud "External Client" as client
+
+client --> lbips : TCP to\n192.168.0.225:80
+lbips --> external
+external --> bridge
+bridge --> cni : via 172.21.0.2\nRoute: 10.43.0.0/16
+cni --> pods : ClusterIP\n10.43.146.204:80
+
+note right of bridge
+  k3d sets up host route:
+  10.43.0.0/16 via 172.21.0.2
+end note
+
+@enduml
+#+end_src
+
+** Connection Flow Diagram
+
+#+begin_src plantuml :file connection-flow.png :results file
+@startuml
+scale 0.75
+
+actor "External Client" as client
+participant "LoadBalancer\n(192.168.0.225:80)" as lb
+participant "Host Kernel" as kernel
+participant "k3d Container\n(172.21.0.2)" as k3d
+participant "Backend Pod\n(10.43.146.204:80)" as pod
+
+client -> lb: TCP Connect
+activate lb
+
+lb -> kernel: net.Dial("tcp", "10.43.146.204:80")
+activate kernel
+
+kernel -> k3d: Route via 172.21.0.2\n(Docker bridge)
+activate k3d
+
+k3d -> pod: CNI routes to pod
+activate pod
+
+note right of kernel
+  Host routing table:
+  10.43.0.0/16 via 172.21.0.2
+end note
+
+pod --> k3d: Response
+deactivate pod
+
+k3d --> kernel: Response
+deactivate k3d
+
+kernel --> lb: Response
+deactivate kernel
+
+lb --> client: Response (bidirectional pipe)
+deactivate lb
+
+note over lb,pod
+  io.Copy in both directions
+  creates transparent TCP proxy
+end note
+
+@enduml
+#+end_src
+
+** IP Pool Management
+
+The IP pool manager maintains a thread-safe allocation table for IP addresses
+within a configured CIDR range. It tracks which IPs are currently allocated and
+provides methods for allocation and release.
+
+*** Key Components
+
+- =IPPool= :: Thread-safe IP allocation manager
+- =IPPoolInstance= :: Global instance initialized from DefaultCIDR
+- =Allocate()= :: Returns next available IP from the pool
+- =Release(ip)= :: Returns IP to the pool for reuse
+
+** Location in Codebase
+
+- =ipmgr/cidr.go:154-230= :: IPPool type and methods
+- =ipmgr/defaults.go:38-39= :: Global IPPoolInstance variable
+- =mgr/ipmgrinit.go:105-111= :: IP pool initialization
+- =mgr/open.go:83-153= :: IP allocation with retry logic
+- =mgr/listener.go:384-395= :: IP cleanup on listener close
+
+* IP Allocation Process
+
+** Initialization
+
+When the load balancer starts, it initializes the IP pool from the configured
+CIDR range:
+
+#+begin_src go :tangle no :results org
+// Initialize IP pool from the CIDR range
+var err error
+ipmgr.IPPoolInstance, err = ipmgr.NewIPPool(ipmgr.DefaultCIDR.String())
+if err != nil {
+    log.Fatalf("Failed to create IP pool from CIDR %s: %v",
+               ipmgr.DefaultCIDR.String(), err)
+}
+log.Printf("Initialized IP pool for CIDR: %s", ipmgr.DefaultCIDR.String())
+#+end_src
+
+** Service Binding Flow
+
+#+begin_src plantuml :file service-binding-flow.png :results file
+@startuml
+scale 0.8
+
+start
+
+repeat
+  :Service Event Received;
+
+  :Allocate IP from Pool;
+  note right
+    IPPoolInstance.Allocate()
+    Returns next available IP
+  end note
+
+  :Add IP to Network Interface;
+  note right
+    ip addr add 192.168.0.X/28
+    dev enx803f5df6e873
+  end note
+
+  :Attempt TCP Bind;
+  note right
+    net.Listen("tcp", "192.168.0.X:80")
+  end note
+
+  if (Bind Successful?) then (yes)
+    :Update Service.Spec.LoadBalancerIP;
+    :Return Listener;
+    stop
+  else (no - EADDRINUSE)
+    :Release IP back to Pool;
+    :Remove IP from Interface;
+  endif
+
+repeat while (More IPs available?\nMax 14 attempts for /28) is (yes)
+->no;
+
+:Log: Exhausted all IP attempts;
+stop
+
+@enduml
+#+end_src
+
+** Code Flow
+
+*** ListenWithIPAllocation Function
+
+The =ListenWithIPAllocation= function in =mgr/open.go:83-153= implements the
+retry logic:
+
+#+begin_src go :tangle no :results org
+func ListenWithIPAllocation(serviceKey string, Service *v1.Service,
+                           linkDevice string, cancel chan struct{}) (listener net.Listener) {
+
+    maxIPAttempts := 14 // For /28 CIDR: 16 - network - broadcast
+
+    for attempt := 0; attempt < maxIPAttempts; attempt++ {
+        // 1. Allocate IP from pool
+        allocatedIP, err := ipmgr.IPPoolInstance.Allocate()
+        if err != nil {
+            return nil
+        }
+
+        // 2. Add IP to network interface
+        cidrStr := fmt.Sprintf("%s/%s", allocatedIP, ipmgr.Bits)
+        managedLBIPs.AddAddr(cidrStr, linkDevice)
+
+        // 3. Try to bind
+        address := fmt.Sprintf("%s:%s", allocatedIP, port)
+        listener, err = net.Listen("tcp", address)
+
+        if err == nil {
+            // Success!
+            Service.Spec.LoadBalancerIP = allocatedIP
+            return listener
+        }
+
+        // 4. Handle "address already in use"
+        if isAddressInUse(err) {
+            ipmgr.IPPoolInstance.Release(allocatedIP)
+            managedLBIPs.RemoveAddr(cidrStr, linkDevice)
+            continue // Try next IP
+        }
+
+        // Other errors are fatal
+        return nil
+    }
+
+    return nil // Exhausted all IPs
+}
+#+end_src
+
+* IP Pool Implementation
+
+** IP Lifecycle State Diagram
+
+#+begin_src plantuml :file ip-lifecycle.png :results file
+@startuml
+scale 0.7
+
+[*] --> Available : Pool Initialized
+
+Available --> Allocated : IPPool.Allocate()
+note on link
+  Lock mutex
+  Find next available IP
+  Mark as allocated
+end note
+
+Allocated --> InterfaceAdded : managedLBIPs.AddAddr()
+note on link
+  ip addr add X.X.X.X/28
+  dev enx803f5df6e873
+end note
+
+InterfaceAdded --> Listening : net.Listen() SUCCESS
+note on link
+  Bind successful
+  Update Service.Spec.LoadBalancerIP
+end note
+
+InterfaceAdded --> BindFailed : net.Listen() EADDRINUSE
+note on link
+  Port/IP already in use
+end note
+
+BindFailed --> InterfaceRemoved : managedLBIPs.RemoveAddr()
+InterfaceRemoved --> Available : IPPool.Release()
+note on link
+  Return to pool for reuse
+end note
+
+Listening --> ServiceActive : Accepting Connections
+note on link
+  Round-robin to backends
+  Bidirectional TCP proxy
+end note
+
+ServiceActive --> ServiceDeleted : Service Deleted/Closed
+ServiceDeleted --> InterfaceRemoved2 : managedLBIPs.RemoveAddr()
+InterfaceRemoved2 --> Available : IPPool.Release()
+
+note right of Available
+  IPs in pool are reusable
+  for new service allocations
+end note
+
+@enduml
+#+end_src
+
+** Data Structure
+
+#+begin_src go :tangle no :results org
+type IPPool struct {
+    cidr      *net.IPNet           // CIDR range (e.g., 192.168.0.224/28)
+    allocated map[string]bool      // Tracks allocated IPs
+    mu        sync.Mutex            // Thread-safe access
+}
+#+end_src
+
+** Allocation Algorithm
+
+The allocation algorithm iterates through all IPs in the CIDR range, skipping:
+- Network address (first IP)
+- Broadcast address (last IP)
+- Already allocated IPs
+
+#+begin_src go :tangle no :results org
+func (p *IPPool) Allocate() (string, error) {
+    p.mu.Lock()
+    defer p.mu.Unlock()
+
+    // Iterate through CIDR range
+    for ip := p.cidr.IP.Mask(p.cidr.Mask); p.cidr.Contains(ip); incIP(ip) {
+        ipStr := ip.String()
+
+        // Skip network and broadcast
+        if p.isNetworkOrBroadcast(ip) {
+            continue
+        }
+
+        // Check if available
+        if !p.allocated[ipStr] {
+            p.allocated[ipStr] = true
+            return ipStr, nil
+        }
+    }
+
+    return "", fmt.Errorf("no available IPs in pool")
+}
+#+end_src
+
+** Release Mechanism
+
+When a service is deleted or its listener closes, the IP is released back to the
+pool in =mgr/listener.go:384-395=:
+
+#+begin_src go :tangle no :results org
+// Release the allocated IP back to the pool before closing
+if ml.Service != nil && ml.Service.Spec.LoadBalancerIP != "" {
+    ip := ml.Service.Spec.LoadBalancerIP
+
+    // Only release if it's not the default CIDR base IP
+    if ipmgr.DefaultCIDR != nil && ip != ipmgr.DefaultCIDR.IP {
+        if ipmgr.IPPoolInstance != nil {
+            ipmgr.IPPoolInstance.Release(ip)
+            log.Printf("Released IP %s back to pool for service %s", ip, ml.Key)
+        }
+    }
+}
+#+end_src
+
+* Error Detection
+
+** Address Already In Use Detection
+
+The =isAddressInUse= function detects bind failures due to port/IP conflicts:
+
+#+begin_src go :tangle no :results org
+func isAddressInUse(err error) bool {
+    if err == nil {
+        return false
+    }
+
+    // Check for syscall.EADDRINUSE
+    if opErr, ok := err.(*net.OpError); ok {
+        if osErr, ok := opErr.Err.(*syscall.Errno); ok {
+            return *osErr == syscall.EADDRINUSE
+        }
+        return strings.Contains(opErr.Error(), "address already in use")
+    }
+
+    return strings.Contains(err.Error(), "address already in use")
+}
+#+end_src
+
+* CIDR Range Calculation
+
+** Example: /28 CIDR (192.168.0.224/28)
+
+| Purpose          | Address       | Notes                    |
+|------------------+---------------+--------------------------|
+| Network Address  | 192.168.0.224 | Skipped (not allocated)  |
+| Usable IP 1      | 192.168.0.225 | First allocatable IP     |
+| Usable IP 2      | 192.168.0.226 | Second allocatable IP    |
+| ...              | ...           | ...                      |
+| Usable IP 14     | 192.168.0.238 | Last allocatable IP      |
+| Broadcast        | 192.168.0.239 | Skipped (not allocated)  |
+|------------------+---------------+--------------------------|
+| Total IPs        | 16            |                          |
+| Usable IPs       | 14            | Available for allocation |
+
+** Supported CIDR Sizes
+
+The implementation supports any valid IPv4 CIDR range:
+
+- =/28= :: 14 usable IPs (common for small deployments)
+- =/27= :: 30 usable IPs
+- =/26= :: 62 usable IPs
+- =/24= :: 254 usable IPs (typical class C network)
+
+* Network Integration
+
+** How Host Connects to k3d Pods
+
+The load balancer running on the host can connect to k3d pod ClusterIPs through
+Docker's bridge network:
+
+#+begin_example
+Host Network Stack
+  ├─ br-2b0c6c745dc4 (172.21.0.1/16) ← Docker bridge for k3d-db
+  │    └─ k3d-db-server-0 (172.21.0.2) ← k3d container
+  │         └─ cni0 (10.42.0.1/24) ← CNI bridge inside container
+  │              └─ Pod IPs (10.42.0.x, 10.43.x.x ClusterIPs)
+  │
+  └─ enx803f5df6e873 (192.168.0.x) ← External interface
+       └─ 192.168.0.225-238 ← LoadBalancer ExternalIPs
+#+end_example
+
+** Routing Configuration
+
+k3d automatically sets up host routes to enable pod connectivity:
+
+#+begin_src bash :tangle no :results org :shebang #!/usr/bin/env bash
+# View routes to k3d networks
+ip route | grep -E "172.21|10.43"
+
+# Example output:
+# 10.43.0.0/16 via 172.21.0.2 dev br-2b0c6c745dc4
+# 172.21.0.0/16 dev br-2b0c6c745dc4 proto kernel scope link src 172.21.0.1
+#+end_src
+
+** Connection Path
+
+#+begin_example
+External Client
+  ↓ TCP to 192.168.0.225:80 (ExternalIP on host interface)
+LoadBalancer (listens on host with --network=host)
+  ↓ Round-robin selects backend pod
+  ↓ TCP Dial to 10.43.146.204:80 (pod ClusterIP)
+Host Kernel
+  ↓ Routes via 172.21.0.2 (k3d container)
+k3d Container
+  ↓ Routes to pod via CNI
+Backend Pod
+#+end_example
+
+* TCP Proxying
+
+** Bidirectional Pipe Implementation
+
+The load balancer uses a bidirectional pipe pattern in =pipe/pipe.go:58-78= to
+forward traffic between client and backend:
+
+#+begin_src go :tangle no :results org
+func (pipe *Pipe) Connect() {
+    done := make(chan bool, 2)
+
+    // Client → Backend
+    go func() {
+        defer pipe.Close()
+        io.Copy(pipe.SinkConn, pipe.SourceConn)
+        done <- true
+    }()
+
+    // Backend → Client
+    go func() {
+        defer pipe.Close()
+        io.Copy(pipe.SourceConn, pipe.SinkConn)
+        done <- true
+    }()
+}
+#+end_src
+
+This creates a transparent TCP proxy that:
+- Copies bytes in both directions simultaneously
+- Doesn't parse or modify HTTP/TCP content
+- Handles connection cleanup automatically
+
+* Configuration
+
+** Command Line Options
+
+#+begin_src bash :tangle no :results org :shebang #!/usr/bin/env bash
+# Run with specific CIDR range
+bin/loadbalancer \
+    --kubeconfig=/etc/kubernetes/config.k3d \
+    --restricted-cidr=192.168.0.224/28 \
+    --link-device=enx803f5df6e873 \
+    --debug=true
+#+end_src
+
+** Docker Container Execution
+
+#+begin_src bash :tangle no :results org :shebang #!/usr/bin/env bash
+docker run --name loadbalancer \
+    --cap-add=NET_ADMIN \
+    --cap-add=NET_RAW \
+    --cap-add=NET_BIND_SERVICE \
+    --network=host \
+    -e KUBERNETES=true \
+    -v $HOME/.kube/config.k3d:/etc/kubernetes/config.k3d \
+    -e KUBECONFIG=/etc/kubernetes/config.k3d \
+    -e DEBUG=true \
+    -e LINKDEVICE=enx803f5df6e873 \
+    -e RESTRICTED_CIDR=192.168.0.224/28 \
+    kdc2:5000/loadbalancer:latest
+#+end_src
+
+** Required Capabilities
+
+The load balancer requires these Linux capabilities to manage network interfaces:
+
+- =CAP_NET_ADMIN= :: Add/remove IP addresses on interfaces
+- =CAP_NET_RAW= :: Raw socket operations
+- =CAP_NET_BIND_SERVICE= :: Bind to privileged ports (<1024)
+
+Set via =make setcap=:
+
+#+begin_src bash :tangle no :results org :shebang #!/usr/bin/env bash
+sudo setcap 'cap_net_admin,cap_net_raw,cap_net_bind_service=+ep' bin/loadbalancer
+#+end_src
+
+* Operational Behavior
+
+** Service Creation Example
+
+#+begin_example
+2025/10/01 19:18:49 Initialized IP pool for CIDR: 192.168.0.224/28
+2025/10/01 19:18:49 ServiceWatcher Event default/sample-service for type ADD
+2025/10/01 19:18:49 Service default/sample-service listener create start
+2025/10/01 19:18:49 Service default/sample-service Attempting to bind to 192.168.0.225:80 (attempt 1/14)
+2025/10/01 19:18:49 Service default/sample-service Address 192.168.0.225:80 already in use, trying next IP
+2025/10/01 19:18:49 Service default/sample-service Attempting to bind to 192.168.0.226:80 (attempt 2/14)
+2025/10/01 19:18:49 Service default/sample-service Successfully bound to 192.168.0.226:80
+2025/10/01 19:18:49 SetExternalIP [192.168.0.226]
+2025/10/01 19:18:49 Service default/sample-service listener created 192.168.0.226:80
+#+end_example
+
+** Service Deletion Example
+
+#+begin_example
+2025/10/01 19:20:15 Shutting down listener for default/sample-service
+2025/10/01 19:20:15 Released IP 192.168.0.226 back to pool for service default/sample-service
+2025/10/01 19:20:15 Removing ExternalIP [192.168.0.226]
+2025/10/01 19:20:15 RemoveAddr 192.168.0.226/28 enx803f5df6e873
+#+end_example
+
+* Testing
+
+** Manual Testing Steps
+
+1. Start the load balancer:
+
+   #+begin_src bash :tangle no :results org :shebang #!/usr/bin/env bash
+   bin/loadbalancer --kubeconfig=$HOME/.kube/config.k3d --debug=true
+   #+end_src
+
+2. Create a test service in k3d:
+
+   #+begin_src bash :tangle no :results org :shebang #!/usr/bin/env bash
+   kubectl apply -f - <<EOF
+   apiVersion: v1
+   kind: Service
+   metadata:
+     name: test-service-1
+   spec:
+     type: LoadBalancer
+     ports:
+     - port: 80
+       targetPort: 8080
+     selector:
+       app: test
+   EOF
+   #+end_src
+
+3. Verify IP allocation:
+
+   #+begin_src bash :tangle no :results org :shebang #!/usr/bin/env bash
+   # Check assigned external IP
+   kubectl get svc test-service-1 -o jsonpath='{.spec.externalIPs[0]}'
+
+   # Verify IP is on network interface
+   ip addr show enx803f5df6e873 | grep 192.168.0
+   #+end_src
+
+4. Create a second service to test IP allocation:
+
+   #+begin_src bash :tangle no :results org :shebang #!/usr/bin/env bash
+   kubectl apply -f - <<EOF
+   apiVersion: v1
+   kind: Service
+   metadata:
+     name: test-service-2
+   spec:
+     type: LoadBalancer
+     ports:
+     - port: 80
+       targetPort: 8080
+     selector:
+       app: test
+   EOF
+   #+end_src
+
+5. Verify both services have different IPs:
+
+   #+begin_src bash :tangle no :results org :shebang #!/usr/bin/env bash
+   kubectl get svc -o wide | grep test-service
+   #+end_src
+
+** Expected Results
+
+- First service gets =192.168.0.225= (or next available)
+- Second service gets =192.168.0.226= (next in sequence)
+- Deleting first service releases =192.168.0.225= back to pool
+- Creating third service reuses =192.168.0.225=
+
+* Troubleshooting
+
+** IP Pool Exhaustion
+
+If all IPs in the CIDR are allocated:
+
+#+begin_example
+ERROR: Failed to allocate IP from pool: no available IPs in pool
+#+end_example
+
+**Solution**: Increase CIDR size or delete unused services.
+
+** Address Already In Use (All IPs)
+
+If all attempts fail:
+
+#+begin_example
+ERROR: Service default/test-service Exhausted all IP allocation attempts
+#+end_example
+
+**Possible Causes**:
+- External process using IPs in the range
+- Another load balancer instance running
+- Stale IPs from previous crashes
+
+**Solution**:
+#+begin_src bash :tangle no :results org :shebang #!/usr/bin/env bash
+# Check what's listening on the IPs
+for ip in {225..238}; do
+    sudo ss -tlnp | grep "192.168.0.$ip:80"
+done
+
+# Manually release stuck IPs
+sudo ip addr del 192.168.0.225/28 dev enx803f5df6e873
+#+end_src
+
+** Network Interface Not Found
+
+#+begin_example
+ERROR: Auto-detected interface 'enx803f5df6e873' also has no IPv4 addresses
+#+end_example
+
+**Solution**: Verify interface exists and has IP:
+#+begin_src bash :tangle no :results org :shebang #!/usr/bin/env bash
+ip addr show enx803f5df6e873
+#+end_src
+
+* Future Enhancements
+
+** Potential Improvements
+
+1. **Persistent IP Allocation**
+   - Store IP allocations in Kubernetes annotations
+   - Survive load balancer restarts with same IP assignments
+
+2. **IP Affinity**
+   - Prefer same IP when service is recreated
+   - Use service name hash for deterministic allocation
+
+3. **Multi-CIDR Support**
+   - Support multiple CIDR ranges
+   - Automatic failover to secondary CIDR when primary exhausted
+
+4. **Health-Based Deallocation**
+   - Detect and release IPs from services with no healthy endpoints
+   - Automatic cleanup of orphaned IPs
+
+5. **Metrics and Monitoring**
+   - Expose IP pool utilization metrics
+   - Alert when pool usage exceeds threshold
+
+* References
+
+** Source Files
+
+- [[file:../ipmgr/cidr.go::154][ipmgr/cidr.go:154]] - IPPool implementation
+- [[file:../mgr/open.go::83][mgr/open.go:83]] - ListenWithIPAllocation function
+- [[file:../mgr/ipmgrinit.go::105][mgr/ipmgrinit.go:105]] - IP pool initialization
+- [[file:../mgr/listener.go::384][mgr/listener.go:384]] - IP cleanup on close
+
+** Related Documentation
+
+- [[file:docker-registry-setup.org][Docker Registry Setup]]
+- [[file:../README.md][Project README]]
+
+* Copyright
+
+Copyright 2018-2025 David Walter.
+
+Licensed under the Apache License, Version 2.0.

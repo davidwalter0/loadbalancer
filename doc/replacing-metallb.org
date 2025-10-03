@@ -1,6 +1,7 @@
 #+TITLE: Replacing MetalLB with Loadbalancer on kdc1
-#+AUTHOR: 
+#+AUTHOR: David Walter 
 #+DATE: 2025-09-11
+#+INCLUDE: ~/org/header-portrait.org
 
 * Introduction
 

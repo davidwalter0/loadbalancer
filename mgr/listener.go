@@ -1,6 +1,6 @@
 /*
 
-Copyright 2018 David Walter.
+Copyright 2018-2025 David Walter.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -380,6 +380,19 @@ func (ml *ManagedListener) Close() {
 			ml.Canceled = make(chan struct{})
 		}
 		if ml.Listener != nil {
+			// Release the allocated IP back to the pool before closing
+			if ml.Service != nil && ml.Service.Spec.LoadBalancerIP != "" {
+				ip := ml.Service.Spec.LoadBalancerIP
+
+				// Only release if it's not the default CIDR base IP
+				if ipmgr.DefaultCIDR != nil && ip != ipmgr.DefaultCIDR.IP {
+					if ipmgr.IPPoolInstance != nil {
+						ipmgr.IPPoolInstance.Release(ip)
+						log.Printf("Released IP %s back to pool for service %s", ip, ml.Key)
+					}
+				}
+			}
+
 			if err := ml.Listener.Close(); err != nil {
 				log.Println("Error closing listener", ml.Listener)
 			}

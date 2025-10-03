@@ -1,6 +1,7 @@
 #+TITLE: go-cfg/v3 Migration Complete
-#+AUTHOR: Claude
+#+AUTHOR: David Walter
 #+DATE: [2025-09-11]
+#+INCLUDE: ~/org/header-portrait.org
 
 * Migration to go-cfg/v3 Completed
 
@@ -18,11 +19,11 @@ I've successfully completed the migration of the loadbalancer project to use go-
 
 Migrated from the old go-cfg API to the new v3 API:
 
-| Old API                   | New API                                  |
-|---------------------------+------------------------------------------|
-| =cfg.AddStruct(envCfg)=     | =config.NewManager().Load(envCfg)=        |
-| =cfg.Finalize()=            | (Handled internally by Load)            |
-| =cfg.Usage()=               | =config.NewManager().ShowUsage()=         |
+| Old API                 | New API                            |
+|-------------------------+------------------------------------|
+| =cfg.AddStruct(envCfg)= | =config.NewManager().Load(envCfg)= |
+| =cfg.Finalize()=        | (Handled internally by Load)       |
+| =cfg.Usage()=           | =config.NewManager().ShowUsage()=  |
 
 ** 3. Runtime Link Device Configuration
 

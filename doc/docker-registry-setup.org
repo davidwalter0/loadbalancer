@@ -1,0 +1,283 @@
+#+TITLE: Docker Registry Setup for Home Cluster
+#+AUTHOR: David Walter
+#+DATE: [2025-09-20]
+#+INCLUDE: ~/org/header-portrait.org
+#+PROPERTY: header-args:bash :tangle registry-setup.sh :results org :shebang #!/usr/bin/env bash :mkdirp yes :comments org :padline yes :tangle-mode o0755
+
+* Docker Registry with TLS and NFS Storage
+
+This document describes the setup of a secure Docker registry for a home cluster with:
+
+- TLS certificates for *.ac0.net domain
+- NFS storage from tnas.ac0.net (192.168.0.107)
+- systemd service for automatic startup
+- Client configuration for all cluster nodes
+
+** Setup Script
+
+The following script sets up a Docker registry on the =kdc1= host:
+
+#+begin_src bash
+# Configuration
+REGISTRY_HOST="kdc1"
+REGISTRY_DOMAIN="registry.ac0.net"
+REGISTRY_PORT=5000
+REGISTRY_DIR="/opt/docker-registry"
+REGISTRY_DATA_DIR="${REGISTRY_DIR}/data"
+REGISTRY_CERTS_DIR="${REGISTRY_DIR}/certs"
+REGISTRY_AUTH_DIR="${REGISTRY_DIR}/auth"
+NFS_SERVER="tnas.ac0.net"
+NFS_EXPORT="/volume1/docker-registry"
+LOCAL_CIDR="192.168.0.0/24"
+
+# Set up directories
+echo "Creating registry directories..."
+sudo mkdir -p ${REGISTRY_CERTS_DIR} ${REGISTRY_AUTH_DIR} ${REGISTRY_DATA_DIR}
+#+end_src
+
+** TLS Certificate Generation
+
+Generate TLS certificates for secure communication:
+
+#+begin_src bash
+echo "Generating TLS certificates..."
+cd ${REGISTRY_CERTS_DIR}
+
+# Generate CA key and certificate
+sudo openssl genrsa -out ca-key.pem 4096
+sudo openssl req -new -x509 -days 3650 -key ca-key.pem -sha256 -subj "/CN=Docker Registry CA" -out ca.pem
+
+# Generate server key
+sudo openssl genrsa -out server-key.pem 4096
+
+# Create a CSR and include all your hostnames/IPs
+sudo openssl req -subj "/CN=${REGISTRY_DOMAIN}" -sha256 -new -key server-key.pem -out server.csr
+
+# Configure certificate extensions
+cat > extfile.cnf <<EOF
+subjectAltName = DNS:${REGISTRY_HOST},DNS:${REGISTRY_HOST}.ac0.net,DNS:*.ac0.net,DNS:${REGISTRY_DOMAIN},DNS:tnas.ac0.net,DNS:tnas.afs0.net,DNS:tnas.local,IP:192.168.0.107,IP:${LOCAL_CIDR%/*}
+extendedKeyUsage = serverAuth
+EOF
+
+# Generate the certificate
+sudo openssl x509 -req -days 3650 -sha256 -in server.csr -CA ca.pem -CAkey ca-key.pem \
+  -CAcreateserial -out server-cert.pem -extfile extfile.cnf
+
+# Set appropriate permissions
+sudo chmod 0600 ${REGISTRY_CERTS_DIR}/ca-key.pem ${REGISTRY_CERTS_DIR}/server-key.pem
+#+end_src
+
+** NFS Storage Configuration
+
+Configure NFS storage for registry data persistence:
+
+#+begin_src bash
+echo "Setting up NFS mount..."
+
+# Add NFS mount to fstab if not already present
+if ! grep -q "${NFS_SERVER}:${NFS_EXPORT}" /etc/fstab; then
+  echo "${NFS_SERVER}:${NFS_EXPORT} ${REGISTRY_DATA_DIR} nfs defaults,soft,timeo=30,retry=2 0 0" | sudo tee -a /etc/fstab
+fi
+
+# Mount the NFS share
+sudo mount ${REGISTRY_DATA_DIR} || echo "NFS mount already exists or failed (might need to verify NFS server)"
+#+end_src
+
+** systemd Service Configuration
+
+Create a systemd service for managing the registry container:
+
+#+begin_src bash
+echo "Creating systemd service..."
+
+# Create systemd service file
+sudo bash -c "cat > /etc/systemd/system/docker-registry.service" << EOF
+[Unit]
+Description=Docker Registry Container
+After=docker.service network-online.target
+Requires=docker.service network-online.target
+
+[Service]
+Type=simple
+TimeoutStartSec=0
+Restart=always
+ExecStartPre=-/usr/bin/docker stop %n
+ExecStartPre=-/usr/bin/docker rm %n
+ExecStart=/usr/bin/docker run --rm --name docker-registry \\
+  -p ${REGISTRY_PORT}:5000 \\
+  -v ${REGISTRY_DATA_DIR}:/var/lib/registry \\
+  -v ${REGISTRY_CERTS_DIR}:/certs \\
+  -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/server-cert.pem \\
+  -e REGISTRY_HTTP_TLS_KEY=/certs/server-key.pem \\
+  registry:2
+ExecStop=/usr/bin/docker stop %n
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start the service
+echo "Enabling and starting registry service..."
+sudo systemctl daemon-reload
+sudo systemctl enable docker-registry
+sudo systemctl start docker-registry
+#+end_src
+
+** Client Setup Script
+
+Create a script to configure client hosts to use the registry:
+
+#+begin_src bash
+echo "Creating client setup script..."
+sudo bash -c "cat > ${REGISTRY_DIR}/setup-client.sh" << 'EOF'
+#!/bin/bash
+# Docker Registry Client Setup Script
+
+REGISTRY_HOST="kdc1"
+REGISTRY_DOMAIN="registry.ac0.net"
+REGISTRY_PORT=5000
+REGISTRY_ADDRESS="${REGISTRY_DOMAIN}:${REGISTRY_PORT}"
+CERT_DIR="/etc/docker/certs.d/${REGISTRY_ADDRESS}"
+
+# Create certificate directory
+sudo mkdir -p ${CERT_DIR}
+
+# Copy CA certificate
+sudo cp /opt/docker-registry/certs/ca.pem ${CERT_DIR}/ca.crt
+
+# Add registry entries to /etc/hosts if needed
+if ! grep -q "${REGISTRY_DOMAIN}" /etc/hosts; then
+  # Get registry server IP
+  REGISTRY_IP=$(getent hosts ${REGISTRY_HOST} | awk '{ print $1 }')
+  if [ -z "$REGISTRY_IP" ]; then
+    echo "Could not resolve ${REGISTRY_HOST}, please enter the IP address:"
+    read REGISTRY_IP
+  fi
+  echo "${REGISTRY_IP} ${REGISTRY_DOMAIN}" | sudo tee -a /etc/hosts
+fi
+
+# Add NFS server to /etc/hosts if needed
+if ! grep -q "tnas.ac0.net" /etc/hosts; then
+  echo "192.168.0.107 tnas.ac0.net tnas.afs0.net tnas.local" | sudo tee -a /etc/hosts
+fi
+
+# Restart Docker daemon
+sudo systemctl restart docker
+
+echo "Client setup complete. You can now use:"
+echo "  docker pull ${REGISTRY_ADDRESS}/your-image"
+echo "  docker push ${REGISTRY_ADDRESS}/your-image"
+EOF
+
+sudo chmod +x ${REGISTRY_DIR}/setup-client.sh
+
+echo "====================================================="
+echo "Docker Registry setup complete!"
+echo "Registry is running at: ${REGISTRY_DOMAIN}:${REGISTRY_PORT}"
+echo "To configure clients, run: ${REGISTRY_DIR}/setup-client.sh"
+echo "====================================================="
+#+end_src
+
+* Usage Instructions
+
+** Setting Up the Registry
+
+1. On the =kdc1= host, run the generated script:
+
+   #+begin_src bash :tangle no
+   chmod +x registry-setup.sh
+   ./registry-setup.sh
+   #+end_src
+
+2. Verify that the service is running:
+
+   #+begin_src bash :tangle no
+   systemctl status docker-registry
+   #+end_src
+
+** Configuring Client Hosts
+
+1. Copy the client setup script to each client host, or access it from the NFS share:
+
+   #+begin_src bash :tangle no
+   scp kdc1:/opt/docker-registry/setup-client.sh .
+   ./setup-client.sh
+   #+end_src
+
+2. Verify the client configuration:
+
+   #+begin_src bash :tangle no
+   docker info | grep Registry
+   #+end_src
+
+** Using the Registry
+
+1. Pull an image from Docker Hub:
+
+   #+begin_src bash :tangle no
+   docker pull nginx:latest
+   #+end_src
+
+2. Tag it for your registry:
+
+   #+begin_src bash :tangle no
+   docker tag nginx:latest registry.ac0.net:5000/nginx:latest
+   #+end_src
+
+3. Push it to your registry:
+
+   #+begin_src bash :tangle no
+   docker push registry.ac0.net:5000/nginx:latest
+   #+end_src
+
+4. Pull it from your registry:
+
+   #+begin_src bash :tangle no
+   docker pull registry.ac0.net:5000/nginx:latest
+   #+end_src
+
+* Optional: Adding Authentication
+
+If you need authentication, modify the setup:
+
+#+begin_src bash :tangle no
+# Generate authentication credentials
+sudo mkdir -p /opt/docker-registry/auth
+sudo docker run --rm --entrypoint htpasswd httpd:2 -Bbn username password | sudo tee /opt/docker-registry/auth/htpasswd
+
+# Modify the systemd service to include auth configuration
+# -v /opt/docker-registry/auth:/auth \
+# -e "REGISTRY_AUTH=htpasswd" \
+# -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
+# -e "REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd" \
+#+end_src
+
+* Maintenance
+
+** Garbage Collection
+
+To clean up unused layers and reclaim space:
+
+#+begin_src bash :tangle no
+#!/bin/bash
+# Run Docker Registry garbage collection
+docker stop docker-registry
+docker run --rm \
+  -v /opt/docker-registry/data:/var/lib/registry \
+  registry:2 bin/registry garbage-collect /etc/docker/registry/config.yml
+docker start docker-registry
+#+end_src
+
+** Backup
+
+Back up the registry data periodically:
+
+#+begin_src bash :tangle no
+#!/bin/bash
+# Backup Docker Registry data
+BACKUP_DIR="/backup/docker-registry"
+BACKUP_FILE="registry-data-$(date +%Y%m%d).tar.gz"
+
+mkdir -p ${BACKUP_DIR}
+tar czf ${BACKUP_DIR}/${BACKUP_FILE} -C /opt/docker-registry data
+#+end_src
