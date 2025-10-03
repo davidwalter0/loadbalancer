@@ -2,8 +2,6 @@ module github.com/davidwalter0/loadbalancer
 
 go 1.24.0
 
-toolchain go1.24.7
-
 require (
 	github.com/davidwalter0/backoff v1.1.0
 	github.com/davidwalter0/go-cfg/v3 v3.0.0
