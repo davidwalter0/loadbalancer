@@ -387,8 +387,9 @@ func (ml *ManagedListener) Close() {
 				// Only release if it's not the default CIDR base IP
 				if ipmgr.DefaultCIDR != nil && ip != ipmgr.DefaultCIDR.IP {
 					if ipmgr.IPPoolInstance != nil {
-						ipmgr.IPPoolInstance.Release(ip)
-						log.Printf("Released IP %s back to pool for service %s", ip, ml.Key)
+						port := fmt.Sprintf("%d", ml.Port)
+						ipmgr.IPPoolInstance.Release(ip, port)
+						log.Printf("Released IP %s:%s back to pool for service %s", ip, port, ml.Key)
 					}
 				}
 			}
