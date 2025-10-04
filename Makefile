@@ -13,7 +13,7 @@
 # limitations under the License.
 
 export GOSUMDB=
-.PHONY: install clean build utils install-utils yaml appl get push tag tag-push info e2e-test e2e-test-basic e2e-test-health e2e-test-debug e2e-test-ci setcap
+.PHONY: install clean build utils install-utils yaml appl get push tag tag-push info e2e-test e2e-test-basic e2e-test-health e2e-test-debug e2e-test-ci setcap local-image local-push
 # To enable kubernetes commands a valid configuration is required
 
 # export GOPATH=/go
@@ -124,6 +124,18 @@ tag-push: info .dep/tag-$(DOCKER_USER)-$(IMAGE)-$(TAG) .dep/tag-push-$(DOCKER_US
 
 .dep/tag-push-$(DOCKER_USER)-$(IMAGE)-$(TAG): .dep/image-$(DOCKER_USER)-$(IMAGE)-latest
 	docker push $(DOCKER_USER)/$(IMAGE):$(TAG)
+	touch $@
+
+local-image: .dep/local-image-$(IMAGE)-latest
+
+.dep/local-image-$(IMAGE)-latest: .dep $(target)
+	docker buildx build --progress=plain --tag=localhost:5000/$(IMAGE):latest .
+	touch $@
+
+local-push: info .dep .dep/local-push-$(IMAGE)-latest
+
+.dep/local-push-$(IMAGE)-latest: .dep/local-image-$(IMAGE)-latest
+	docker push localhost:5000/$(IMAGE):latest
 	touch $@
 
 yaml: info .dep .dep/yaml-$(DOCKER_USER)-$(IMAGE)-$(TAG)

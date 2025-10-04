@@ -62,6 +62,7 @@ type ForwarderCfg struct {
 	Kubernetes  bool   `json:"kubernetes"  doc:"use kubernetes dynamic endpoints from service/ns" default:"true"`
 	LinkDevice  string `json:"linkdevice"  doc:"device for load balancers external addresses"     default:""`
 	RestrictedCIDR string `json:"restricted-cidr" doc:"restricted IP range for load balancer (e.g. 192.168.0.224/28)" default:"192.168.0.224/28"`
+	TagWorkerNodes bool `json:"tag-worker-nodes" doc:"tag worker nodes with loadbalancer role" default:"false"`
 }
 
 // ClientCfg options to configure endPtDefn
