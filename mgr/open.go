@@ -82,6 +82,7 @@ func (mgr *Mgr) Listen(Service *v1.Service) {
 
 // ListenWithIPAllocation attempts to bind to an available IP from the pool
 // If binding fails due to "address already in use", it will try the next IP
+// If Service.Spec.LoadBalancerIP is set, it will attempt to use that specific IP
 func ListenWithIPAllocation(serviceKey string, Service *v1.Service, linkDevice string, cancel chan struct{}) (listener net.Listener) {
 	var ServicePrefix = fmt.Sprintf("Service %-32.32s", serviceKey)
 	var allocatedIP string
@@ -99,6 +100,44 @@ func ListenWithIPAllocation(serviceKey string, Service *v1.Service, linkDevice s
 		log.Printf("%s No valid port found in service", ServicePrefix)
 		return nil
 	}
+
+	// Check if a specific IP is requested
+	requestedIP := Service.Spec.LoadBalancerIP
+	if requestedIP != "" {
+		log.Printf("%s Specific IP requested: %s", ServicePrefix, requestedIP)
+		// Try to allocate the specific IP:port combination
+		err := ipmgr.IPPoolInstance.AllocateSpecific(requestedIP, port)
+		if err != nil {
+			log.Printf("%s Failed to allocate requested IP:port %s:%s: %v", ServicePrefix, requestedIP, port, err)
+			return nil
+		}
+
+		allocatedIP = requestedIP
+		cidrStr := fmt.Sprintf("%s/%s", allocatedIP, ipmgr.Bits)
+		address := fmt.Sprintf("%s:%s", allocatedIP, port)
+
+		log.Printf("%s Attempting to bind to requested IP:port %s", ServicePrefix, address)
+
+		// Add the IP address to the interface (only if not already added)
+		managedLBIPs.AddAddr(cidrStr, linkDevice)
+
+		// Try to listen on this address
+		listener, err := net.Listen("tcp", address)
+		if err == nil {
+			log.Printf("%s Successfully bound to requested IP:port %s", ServicePrefix, address)
+			return listener
+		}
+
+		// Failed to bind to requested IP
+		log.Printf("%s Failed to bind to requested IP:port %s: %v", ServicePrefix, address, err)
+		ipmgr.IPPoolInstance.Release(allocatedIP, port)
+		// Note: We don't remove the address from the interface here because
+		// another service might still be using this IP on a different port
+		return nil
+	}
+
+	// No specific IP requested, allocate dynamically
+	log.Printf("%s No specific IP requested, allocating dynamically", ServicePrefix)
 
 	// Maximum number of IP allocation attempts
 	maxIPAttempts := 14 // For a /28 CIDR, we have 14 usable IPs (16 - network - broadcast)
@@ -123,7 +162,8 @@ func ListenWithIPAllocation(serviceKey string, Service *v1.Service, linkDevice s
 		// Try to listen on this address
 		listener, err = net.Listen("tcp", address)
 		if err == nil {
-			// Success! Update the service's CIDR to use this IP
+			// Success! Register the port and update the service's CIDR to use this IP
+			ipmgr.IPPoolInstance.RegisterPort(allocatedIP, port)
 			Service.Spec.LoadBalancerIP = allocatedIP
 			log.Printf("%s Successfully bound to %s", ServicePrefix, address)
 			return listener
@@ -134,7 +174,7 @@ func ListenWithIPAllocation(serviceKey string, Service *v1.Service, linkDevice s
 			log.Printf("%s Address %s already in use, trying next IP", ServicePrefix, address)
 
 			// Release this IP back to the pool and remove from interface
-			ipmgr.IPPoolInstance.Release(allocatedIP)
+			ipmgr.IPPoolInstance.Release(allocatedIP, port)
 			managedLBIPs.RemoveAddr(cidrStr, linkDevice)
 
 			// Try next IP
@@ -143,7 +183,7 @@ func ListenWithIPAllocation(serviceKey string, Service *v1.Service, linkDevice s
 
 		// For other errors, log and release the IP
 		log.Printf("%s Failed to bind to %s: %v", ServicePrefix, address, err)
-		ipmgr.IPPoolInstance.Release(allocatedIP)
+		ipmgr.IPPoolInstance.Release(allocatedIP, port)
 		managedLBIPs.RemoveAddr(cidrStr, linkDevice)
 		return nil
 	}

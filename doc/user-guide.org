@@ -129,7 +129,9 @@ Pass configuration as command line flags:
 
 ** Creating a LoadBalancer Service
 
-1. Create a Kubernetes service with =type: LoadBalancer=:
+*** Dynamic IP Allocation
+
+1. Create a Kubernetes service with =type: LoadBalancer= (no =loadBalancerIP= specified):
 
 #+begin_src yaml :tangle no
 apiVersion: v1
@@ -157,7 +159,67 @@ kubectl apply -f example-service.yaml
 kubectl get service example-service
 #+end_src
 
-The service should show an external IP assigned by the loadbalancer.
+The service should show an external IP automatically assigned by the loadbalancer
+from the configured IP pool.
+
+*** Static IP Allocation
+
+To request a specific IP address, set =spec.loadBalancerIP=:
+
+#+begin_src yaml :tangle no
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-service
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.0.226  # Request specific IP
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: example-app
+#+end_src
+
+The IP must be within the configured CIDR range.
+
+*** Sharing an IP Between Services
+
+Multiple services can share the same IP address on different ports:
+
+#+begin_src yaml :tangle no
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-http
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.0.226
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: webapp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-https
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.0.226  # Same IP, different port
+  ports:
+  - port: 443
+    targetPort: 8443
+  selector:
+    app: webapp
+#+end_src
+
+This is useful for:
+- Conserving IP addresses in limited IP pools
+- Hosting multiple protocols (HTTP/HTTPS) on the same IP
+- Grouping related services
 
 ** Service Annotations
 
@@ -255,6 +317,32 @@ kubectl logs deployment/external-loadbalancer
 3. Check if application is listening:
    #+begin_src bash :tangle no
    kubectl exec -it <pod-name> -- netstat -lntp
+   #+end_src
+
+*** IP:Port Already Allocated
+
+*Symptoms:* Service fails with error "IP:port already allocated"
+
+*Possible causes:*
+- Another service is already using the same IP:port combination
+- Stale allocation from a crashed service
+
+*Resolution:*
+1. Check which services are using the IP:
+   #+begin_src bash :tangle no
+   kubectl get services -o wide | grep <IP-address>
+   #+end_src
+
+2. Either:
+   - Use a different port on the same IP
+   - Use a different IP address
+   - Delete the conflicting service
+
+3. Example of fixing the conflict:
+   #+begin_src bash :tangle no
+   # If web-http already uses 192.168.0.226:80
+   # Use port 443 instead for HTTPS service
+   kubectl patch service web-https -p '{"spec":{"loadBalancerIP":"192.168.0.226","ports":[{"port":443}]}}'
    #+end_src
 
 *** Performance Issues
