@@ -74,12 +74,14 @@ helm install external-lb loadbalancer/external-loadbalancer \
 
 The loadbalancer supports the following configuration parameters:
 
-| Parameter    | Description                      | Default                   | Required |
-|--------------+----------------------------------+---------------------------+----------|
-| =KUBECONFIG= | Path to kubeconfig file          | =cluster/auth/kubeconfig= | No       |
-| =LINKDEVICE= | Network device for external IPs  | -                         | Yes      |
-| =DEBUG=      | Enable debug logging             | =false=                   | No       |
-| =KUBERNETES= | Use Kubernetes dynamic endpoints | =true=                    | No       |
+| Parameter            | Description                                      | Default                   | Required |
+|----------------------+--------------------------------------------------+---------------------------+----------|
+| =KUBECONFIG=         | Path to kubeconfig file                          | =cluster/auth/kubeconfig= | No       |
+| =LINKDEVICE=         | Network device for external IPs (auto-detected)  | (auto-detected)           | No       |
+| =DEBUG=              | Enable debug logging                             | =false=                   | No       |
+| =KUBERNETES=         | Use Kubernetes dynamic endpoints                 | =true=                    | No       |
+| =RESTRICTED_CIDR=    | Restrict IP pool to specific CIDR block          | =192.168.0.224/28=        | No       |
+| =TAG_WORKER_NODES=   | Auto-label nodes with worker role on startup     | =false=                   | No       |
 
 ** Configuration Methods
 
@@ -93,6 +95,18 @@ env:
   value: "eth0"
 - name: DEBUG
   value: "true"
+- name: RESTRICTED_CIDR
+  value: "192.168.0.192/28"
+- name: TAG_WORKER_NODES
+  value: "true"
+#+end_src
+
+Or export them locally:
+
+#+begin_src bash :tangle no
+export RESTRICTED_CIDR=192.168.0.192/28
+export TAG_WORKER_NODES=true
+./loadbalancer
 #+end_src
 
 *** ConfigMap
@@ -122,8 +136,10 @@ env:
 Pass configuration as command line flags:
 
 #+begin_src bash :tangle no
-./loadbalancer --linkdevice=eth0 --debug=true
+./loadbalancer --linkdevice=eth0 --debug=true --restricted-cidr=192.168.0.192/28 --tag-worker-nodes
 #+end_src
+
+Note: Command line flags take precedence over environment variables and config files.
 
 * Usage
 

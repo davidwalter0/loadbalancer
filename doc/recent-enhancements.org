@@ -1,0 +1,100 @@
+#+TITLE: Recent Enhancements
+#+AUTHOR: System Documentation
+#+DATE: 2025-10-04
+
+* Recent Enhancements to LoadBalancer
+
+** Environment Variable Support
+
+Added full support for configuration via environment variables, which are applied with proper precedence:
+
+- Precedence order: =defaults < config files < environment variables < command-line flags=
+- All configuration fields support environment variables using UPPER_SNAKE_CASE naming
+- Examples:
+  - =RESTRICTED_CIDR=192.168.0.192/28=
+  - =TAG_WORKER_NODES=true=
+  - =LINKDEVICE=eth0=
+  - =DEBUG=true=
+  - =KUBERNETES=false=
+
+Implementation:
+- Added =share/env.go= with environment variable processing
+- Applies env vars after config file loading but before flag parsing
+- Only applies env vars when current value matches default (preserves user flags)
+
+** Automatic Worker Node Labeling
+
+Added =--tag-worker-nodes= flag to automatically label Kubernetes nodes with the worker role.
+
+*** Configuration
+
+- Flag: =--tag-worker-nodes=
+- Environment variable: =TAG_WORKER_NODES=
+- Default: =false=
+
+*** Behavior
+
+- Only runs when Kubernetes mode is enabled (=--kubernetes=true=)
+- Skips nodes that already have the =node-role.kubernetes.io/worker= label
+- Continues on errors (won't crash if unable to label a node)
+- Logs each node labeled for visibility
+
+*** Implementation
+
+- Added =nodemgr/labeler.go= with =LabelWorkerNodes()= function
+- Integrated into =mgr/manager.go= Run() method
+- Checks for valid clientset before attempting to label
+
+** Localhost Registry Support
+
+Added make targets for building and pushing to a local Docker registry:
+
+*** New Make Targets
+
+#+begin_src makefile
+local-image    # Build and tag as localhost:5000/loadbalancer:latest
+local-push     # Build and push to localhost:5000/loadbalancer:latest
+#+end_src
+
+*** Usage
+
+#+begin_src bash :tangle no
+make local-image   # Build container image for localhost registry
+make local-push    # Push to localhost:5000 registry
+#+end_src
+
+** Documentation Updates
+
+*** Updated Files
+
+- =README.md=: Added environment variables, command-line flags, and localhost registry sections
+- =doc/user-guide.org=: Updated configuration parameters table with new options
+- =doc/user-guide.org=: Added examples for environment variables and flags
+- =docker-buildx.org=: Created documentation for docker buildx
+
+*** Configuration Parameters Added
+
+| Parameter          | Description                                  | Default               |
+|--------------------+----------------------------------------------+-----------------------|
+| =RESTRICTED_CIDR=  | Restrict IP pool to specific CIDR block      | =192.168.0.224/28=    |
+| =TAG_WORKER_NODES= | Auto-label nodes with worker role on startup | =false=               |
+
+** Testing
+
+All features have been tested:
+
+1. Environment variables correctly override defaults
+2. Command-line flags correctly override environment variables
+3. Node labeling works when connected to Kubernetes cluster
+4. Node labeling silently skips when Kubernetes is disabled
+5. Localhost registry targets build and tag correctly
+
+** Files Modified
+
+- =share/share.go=: Added =TagWorkerNodes= field to =ForwarderCfg=
+- =share/env.go=: New file - environment variable processing
+- =nodemgr/labeler.go=: New file - node labeling functionality
+- =mgr/manager.go=: Integrated node labeling with safety checks
+- =Makefile=: Added =local-image= and =local-push= targets
+- =README.md=: Documentation updates
+- =doc/user-guide.org=: Documentation updates
