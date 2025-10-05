@@ -4,16 +4,7 @@ metadata:
   name: loadbalancer
 servers: 1
 agents: 2
-image: rancher/k3s:latest
-ports:
-  - port: 0.0.0.0:6443:6443
-    nodeFilters:
-      - server:0
 options:
-  k3d:
-    wait: true
-    timeout: "60s"
-    disableLoadbalancer: true
   k3s:
     extraArgs:
       - arg: --disable=traefik

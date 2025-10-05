@@ -51,13 +51,17 @@ fi
 echo "Detected primary interface: $PRIMARY_INTERFACE"
 echo "Detected primary IP: $PRIMARY_IP"
 
-# Generate k3d config from template
+# Generate k3d config from template with primary IP for TLS SAN
 echo "Generating k3d configuration..."
-sed "s/PRIMARY_IP_PLACEHOLDER/$PRIMARY_IP/g" k3d/config.yaml.template > /tmp/k3d-config.yaml
+sed "s|PRIMARY_IP_PLACEHOLDER|$PRIMARY_IP|g" k3d/k3s-config.yaml.template > /tmp/k3d-config.yaml
 
-# Create a new k3d cluster WITHOUT built-in load balancer using config file
+# Create a new k3d cluster WITHOUT built-in load balancer
+# Note: Using hybrid approach - YAML for k3s config, CLI for special flags
+# --no-lb and --api-port are not supported in YAML config
 echo "Creating k3d cluster: $CLUSTER_NAME"
-k3d cluster create -c /tmp/k3d-config.yaml
+k3d cluster create -c /tmp/k3d-config.yaml \
+  --no-lb \
+  --api-port 0.0.0.0:6443
 
 # Wait for the cluster to be ready
 echo "Waiting for cluster to be ready..."

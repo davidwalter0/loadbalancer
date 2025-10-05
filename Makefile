@@ -13,7 +13,7 @@
 # limitations under the License.
 
 export GOSUMDB=
-.PHONY: install clean build utils install-utils yaml appl get push tag tag-push info e2e-test e2e-test-basic e2e-test-health e2e-test-debug e2e-test-ci setcap local-image local-push
+.PHONY: install clean build utils install-utils yaml appl get push tag tag-push info e2e-test e2e-test-basic e2e-test-health e2e-test-debug e2e-test-ci setcap local-image local-push vendor
 # To enable kubernetes commands a valid configuration is required
 
 # export GOPATH=/go
@@ -38,15 +38,21 @@ target:=bin/$(APPL)
 
 # include Makefile.defs
 
-all: info build utils setcap
+all: info vendor build utils setcap
 
-info: 
+info:
 	@echo $(info)
 
+# Vendor dependencies
+vendor:
+	@echo "Vendoring dependencies..."
+	go mod tidy
+	go mod vendor
+
 # Build utility binaries
-utils: bin
+utils: bin vendor
 	@echo "Building utility binaries..."
-	CGO_ENABLED=0 go build --tags netgo -o bin/ ./cmd/...
+	CGO_ENABLED=0 go build -mod=vendor --tags netgo -o bin/ ./cmd/...
 
 # Install utility binaries to ~/go/bin
 install-utils: utils
@@ -69,9 +75,9 @@ etags:
 	mkdir -p .dep
 	touch .dep --reference=Makefile
 
-build: info $(target)
+build: info vendor $(target)
 
-$(target): .dep bin $(build_deps) $(depends) Makefile
+$(target): .dep bin vendor $(build_deps) $(depends) Makefile
 	@echo $(info)
 	@echo "Building via % rule for $@ from $<"
 	@echo $(depends)
@@ -80,7 +86,7 @@ $(target): .dep bin $(build_deps) $(depends) Makefile
 	else																		\
 	    args=" -X main.Version=$${TAG} -X main.Build=$$(date -u +%Y.%m.%d.%H.%M.%S.%:::z) -X main.Commit=$$(git log --format=%h-%aI -n1)";	\
 	fi;																		\
-	CGO_ENABLED=0 go build --tags netgo -ldflags "$${args}" -o $@ $(build_deps) ;
+	CGO_ENABLED=0 go build -mod=vendor --tags netgo -ldflags "$${args}" -o $@ $(build_deps) ;
 	touch $@
 
 # Set capabilities on the loadbalancer binary to allow binding to low ports without root
