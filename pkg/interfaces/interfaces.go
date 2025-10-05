@@ -35,29 +35,32 @@ type InterfaceInfo struct {
 	IPv4Addrs   []string
 }
 
-// DetectWirelessInterfaces uses the 'iw' command to detect wireless interfaces
+// DetectWirelessInterfaces checks sysfs to detect wireless interfaces (no external commands)
 func DetectWirelessInterfaces() (map[string]bool, error) {
-	// Run 'iw dev' to list wireless interfaces
-	cmd := exec.Command("iw", "dev")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to run 'iw dev': %v", err)
-	}
-	
-	// Parse output to find interface names
-	outputStr := string(output)
-	lines := strings.Split(outputStr, "\n")
-	
 	wirelessIfaces := make(map[string]bool)
-	
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "Interface ") {
-			ifaceName := strings.TrimPrefix(line, "Interface ")
-			wirelessIfaces[ifaceName] = true
+
+	// Get all network interfaces
+	netIfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check each interface for wireless directory in sysfs
+	for _, iface := range netIfaces {
+		// Check if /sys/class/net/<iface>/wireless exists
+		wirelessPath := fmt.Sprintf("/sys/class/net/%s/wireless", iface.Name)
+		if _, err := os.Stat(wirelessPath); err == nil {
+			wirelessIfaces[iface.Name] = true
+			continue
+		}
+
+		// Alternative: Check if /sys/class/net/<iface>/phy80211 exists
+		phy80211Path := fmt.Sprintf("/sys/class/net/%s/phy80211", iface.Name)
+		if _, err := os.Stat(phy80211Path); err == nil {
+			wirelessIfaces[iface.Name] = true
 		}
 	}
-	
+
 	return wirelessIfaces, nil
 }
 
@@ -69,11 +72,10 @@ func GetAllInterfaces() ([]InterfaceInfo, error) {
 		return nil, fmt.Errorf("failed to get network interfaces: %v", err)
 	}
 	
-	// Detect wireless interfaces
+	// Detect wireless interfaces using sysfs (no external commands)
 	wirelessIfaces, err := DetectWirelessInterfaces()
 	if err != nil {
-		// Continue without wireless detection if 'iw' fails
-		fmt.Printf("Warning: failed to detect wireless interfaces: %v\n", err)
+		return nil, fmt.Errorf("failed to detect wireless interfaces: %v", err)
 	}
 	
 	var interfaces []InterfaceInfo
