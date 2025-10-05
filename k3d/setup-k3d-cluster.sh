@@ -37,6 +37,7 @@ echo "Creating k3d cluster: $CLUSTER_NAME"
 k3d cluster create "$CLUSTER_NAME" \
   --agents 2 \
   --k3s-arg "--disable=traefik@server:0" \
+  --k3s-arg "--disable=servicelb@server:0" \
   --no-lb \
   --api-port 0.0.0.0:6443
 

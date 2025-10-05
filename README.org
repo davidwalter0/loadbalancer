@@ -52,13 +52,13 @@ Manage routes / addresses for external ip addresses
   - maintain a map of addresses
   - remove when the last load balancer using the address is removed
 
-- Disallow reuse of service specified loadbalancerIPs
-  - when adding an ip address, it will be used only by one load
-    balancers service
-  - Each service must choose a unique address
-  - if using the default address multiple services may share the
-    default linkdevice address but port collision management is up to
-    the author of the service specification
+- IP reuse across different ports (CIDR conservation)
+  - Multiple services can share the same IP if they use different ports
+  - Priority-based allocation: explicit IP → reuse existing IP → allocate new IP
+  - When a specific loadBalancerIP is requested, it must have the exact IP:port combination available
+  - Dynamic allocation prefers reusing existing IPs before allocating new ones
+  - Clear logging explains allocation decisions and failure reasons
+  - Conflicting IP:port requests are rejected immediately with detailed error messages
 
 * Example Use
 
@@ -68,6 +68,46 @@ loadbalancer can modify routes use privileged ports.
 You can run it with sudo local to the VMs or run on a kubernetes node
 configured with a bridged adapter (see below) and tagged as the
 =node-role.kubernetes.io/load-balancer=
+
+** Deploying with k3d (External LoadBalancer)
+
+For k3d clusters, the loadbalancer runs externally with =--network host= to access both host interfaces and the k3d bridge network.
+
+#+begin_src bash :tangle no
+# Use the provided setup script
+cd k3d
+./setup-k3d-cluster.sh
+
+# Or manually:
+k3d cluster create mycluster \
+  --agents 2 \
+  --k3s-arg "--disable=traefik@server:0" \
+  --k3s-arg "--disable=servicelb@server:0" \
+  --no-lb \
+  --api-port 0.0.0.0:6443
+
+# Run loadbalancer externally
+docker run -d \
+  --name loadbalancer \
+  --network host \
+  --cap-add NET_ADMIN \
+  --cap-add NET_RAW \
+  --cap-add NET_BIND_SERVICE \
+  -v ~/.kube/config:/app/kubeconfig:ro \
+  -e KUBERNETES=true \
+  -e KUBECONFIG=/app/kubeconfig \
+  -e RESTRICTED_CIDR=192.168.0.192/28 \
+  -e TAG_WORKER_NODES=true \
+  loadbalancer:latest \
+  --tag-worker-nodes
+#+end_src
+
+Key points:
+- =--no-lb= disables k3d's built-in load balancer
+- =--disable=servicelb@server:0= disables k3s servicelb (klipper-lb)
+- =--network host= gives container access to host network interfaces
+- Loadbalancer uses NodePorts to reach pod endpoints
+- kube-proxy creates iptables rules for externalIPs automatically
 
 ** Build and Push
 
@@ -242,6 +282,31 @@ address 192.168.0.251:443
   type: LoadBalancer
 #+end_src
 
+* Testing
+
+** E2E Tests
+
+End-to-end tests are available in =test/e2e/= directory to validate loadbalancer behavior:
+
+*** IP Conflict Test
+
+Located in =test/e2e/ip-conflict/=, this test validates IP:port conflict handling:
+
+#+begin_src bash :tangle no
+cd test/e2e/ip-conflict
+./run-test.sh
+#+end_src
+
+The test scenario:
+1. Service 1: Dynamic IP allocation on port 80 (succeeds)
+2. Service 2: Explicit IP that conflicts with Service 1 on port 80 (fails with clear error)
+3. Service 3: Dynamic IP allocation on port 80 (succeeds with next available IP)
+
+Expected behavior:
+- Service 1 gets allocated an IP (e.g., 192.168.0.194:80)
+- Service 2 fails with: "FAILED to allocate requested LoadBalancerIP 192.168.0.194:80 - Reason: IP:port already allocated"
+- Service 3 gets allocated the next IP (e.g., 192.168.0.195:80)
+
 * Bugs
 
 - Unique IP assignment fails
@@ -273,7 +338,15 @@ Moved to complete and testing
   kubernetes cluster
   - [X] Complete
 - [X] Test InCluster endpoint activity
-  - [ ] In progress
+  - [X] Complete
+- [X] Port-aware IP reuse for CIDR conservation
+  - [X] AllocateWithPort() prioritizes reusing existing IPs
+  - [X] Clear logging with allocation reasons
+  - [X] Explicit IP:port conflict detection
+- [X] External deployment for k3d clusters
+  - [X] Host networking support
+  - [X] Disable k3d and k3s servicelb
+  - [X] E2E test suite for IP conflict scenarios
 
 * Possible Future Work
 

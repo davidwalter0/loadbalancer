@@ -207,6 +207,58 @@ func (p *IPPool) Allocate() (string, error) {
 	return "", fmt.Errorf("no available IPs in pool")
 }
 
+// AllocateWithPort finds an IP with the requested port available
+// It prioritizes reusing already-allocated IPs before allocating new ones
+// Returns the IP and whether it was reused (true) or newly allocated (false)
+func (p *IPPool) AllocateWithPort(port string) (ip string, reused bool, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Create a copy of the network IP to avoid modifying the original
+	startIP := make(net.IP, len(p.cidr.IP))
+	copy(startIP, p.cidr.IP)
+
+	// First pass: Try to reuse an already-allocated IP with this port available
+	for ipStr := range p.allocated {
+		// Skip if port is already in use on this IP
+		if p.ports[ipStr] != nil && p.ports[ipStr][port] {
+			continue
+		}
+
+		// Found an allocated IP with the port available
+		if p.ports[ipStr] == nil {
+			p.ports[ipStr] = make(map[string]bool)
+		}
+		p.ports[ipStr][port] = true
+		return ipStr, true, nil
+	}
+
+	// Second pass: No reuse possible, allocate a new IP
+	for ip := startIP.Mask(p.cidr.Mask); p.cidr.Contains(ip); incIP(ip) {
+		ipStr := ip.String()
+
+		// Skip network and broadcast addresses
+		if p.isNetworkOrBroadcast(ip) {
+			continue
+		}
+
+		// Skip already allocated IPs (we already checked them above)
+		if p.allocated[ipStr] {
+			continue
+		}
+
+		// Found a new IP
+		p.allocated[ipStr] = true
+		if p.ports[ipStr] == nil {
+			p.ports[ipStr] = make(map[string]bool)
+		}
+		p.ports[ipStr][port] = true
+		return ipStr, false, nil
+	}
+
+	return "", false, fmt.Errorf("no available IPs for port %s in pool", port)
+}
+
 // AllocateSpecific allocates a specific IP:port combination if it's available in the pool
 // Multiple services can share the same IP if they use different ports
 func (p *IPPool) AllocateSpecific(requestedIP, port string) error {

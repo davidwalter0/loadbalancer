@@ -69,6 +69,10 @@ func (mgr *Mgr) Listen(Service *v1.Service) {
 			managedListener.CIDR.LinkDevice, managedListener.Canceled)
 
 		if managedListener.Listener != nil {
+			// Update Source field to reflect actual listener address
+			managedListener.Source = managedListener.Listener.Addr().String()
+			managedListener.Definition.Source = managedListener.Source
+
 			managedListener.Open()
 
 			log.Printf("%s listener created %v",
@@ -104,11 +108,13 @@ func ListenWithIPAllocation(serviceKey string, Service *v1.Service, linkDevice s
 	// Check if a specific IP is requested
 	requestedIP := Service.Spec.LoadBalancerIP
 	if requestedIP != "" {
-		log.Printf("%s Specific IP requested: %s", ServicePrefix, requestedIP)
+		log.Printf("%s Specific LoadBalancerIP requested: %s:%s", ServicePrefix, requestedIP, port)
+
 		// Try to allocate the specific IP:port combination
 		err := ipmgr.IPPoolInstance.AllocateSpecific(requestedIP, port)
 		if err != nil {
-			log.Printf("%s Failed to allocate requested IP:port %s:%s: %v", ServicePrefix, requestedIP, port, err)
+			log.Printf("%s FAILED to allocate requested LoadBalancerIP %s:%s - Reason: %v", ServicePrefix, requestedIP, port, err)
+			log.Printf("%s Service will not be created due to explicit IP request failure", ServicePrefix)
 			return nil
 		}
 
@@ -116,7 +122,7 @@ func ListenWithIPAllocation(serviceKey string, Service *v1.Service, linkDevice s
 		cidrStr := fmt.Sprintf("%s/%s", allocatedIP, ipmgr.Bits)
 		address := fmt.Sprintf("%s:%s", allocatedIP, port)
 
-		log.Printf("%s Attempting to bind to requested IP:port %s", ServicePrefix, address)
+		log.Printf("%s Attempting to bind to requested %s", ServicePrefix, address)
 
 		// Add the IP address to the interface (only if not already added)
 		managedLBIPs.AddAddr(cidrStr, linkDevice)
@@ -124,71 +130,57 @@ func ListenWithIPAllocation(serviceKey string, Service *v1.Service, linkDevice s
 		// Try to listen on this address
 		listener, err := net.Listen("tcp", address)
 		if err == nil {
-			log.Printf("%s Successfully bound to requested IP:port %s", ServicePrefix, address)
+			log.Printf("%s Successfully bound to requested %s", ServicePrefix, address)
 			return listener
 		}
 
 		// Failed to bind to requested IP
-		log.Printf("%s Failed to bind to requested IP:port %s: %v", ServicePrefix, address, err)
+		log.Printf("%s FAILED to bind to requested %s - Reason: %v", ServicePrefix, address, err)
+		log.Printf("%s Service will not be created due to bind failure on explicit IP", ServicePrefix)
 		ipmgr.IPPoolInstance.Release(allocatedIP, port)
 		// Note: We don't remove the address from the interface here because
 		// another service might still be using this IP on a different port
 		return nil
 	}
 
-	// No specific IP requested, allocate dynamically
-	log.Printf("%s No specific IP requested, allocating dynamically", ServicePrefix)
+	// No specific IP requested, allocate dynamically with port-aware allocation
+	log.Printf("%s No LoadBalancerIP specified, using dynamic allocation for port %s", ServicePrefix, port)
 
-	// Maximum number of IP allocation attempts
-	maxIPAttempts := 14 // For a /28 CIDR, we have 14 usable IPs (16 - network - broadcast)
-
-	for attempt := 0; attempt < maxIPAttempts; attempt++ {
-		// Allocate an IP from the pool
-		var err error
-		allocatedIP, err = ipmgr.IPPoolInstance.Allocate()
-		if err != nil {
-			log.Printf("%s Failed to allocate IP from pool: %v", ServicePrefix, err)
-			return nil
-		}
-
-		cidrStr := fmt.Sprintf("%s/%s", allocatedIP, ipmgr.Bits)
-		address := fmt.Sprintf("%s:%s", allocatedIP, port)
-
-		log.Printf("%s Attempting to bind to %s (attempt %d/%d)", ServicePrefix, address, attempt+1, maxIPAttempts)
-
-		// Add the IP address to the interface
-		managedLBIPs.AddAddr(cidrStr, linkDevice)
-
-		// Try to listen on this address
-		listener, err = net.Listen("tcp", address)
-		if err == nil {
-			// Success! Register the port and update the service's CIDR to use this IP
-			ipmgr.IPPoolInstance.RegisterPort(allocatedIP, port)
-			Service.Spec.LoadBalancerIP = allocatedIP
-			log.Printf("%s Successfully bound to %s", ServicePrefix, address)
-			return listener
-		}
-
-		// Check if the error is "address already in use"
-		if isAddressInUse(err) {
-			log.Printf("%s Address %s already in use, trying next IP", ServicePrefix, address)
-
-			// Release this IP back to the pool and remove from interface
-			ipmgr.IPPoolInstance.Release(allocatedIP, port)
-			managedLBIPs.RemoveAddr(cidrStr, linkDevice)
-
-			// Try next IP
-			continue
-		}
-
-		// For other errors, log and release the IP
-		log.Printf("%s Failed to bind to %s: %v", ServicePrefix, address, err)
-		ipmgr.IPPoolInstance.Release(allocatedIP, port)
-		managedLBIPs.RemoveAddr(cidrStr, linkDevice)
+	// Try to allocate with port (will reuse existing IPs if port is available)
+	var reused bool
+	var err error
+	allocatedIP, reused, err = ipmgr.IPPoolInstance.AllocateWithPort(port)
+	if err != nil {
+		log.Printf("%s FAILED to allocate IP for port %s - Reason: %v", ServicePrefix, port, err)
 		return nil
 	}
 
-	log.Printf("%s Exhausted all IP allocation attempts", ServicePrefix)
+	if reused {
+		log.Printf("%s Reusing existing IP %s for new port %s (IP consolidation)", ServicePrefix, allocatedIP, port)
+	} else {
+		log.Printf("%s Allocated new IP %s for port %s", ServicePrefix, allocatedIP, port)
+	}
+
+	cidrStr := fmt.Sprintf("%s/%s", allocatedIP, ipmgr.Bits)
+	address := fmt.Sprintf("%s:%s", allocatedIP, port)
+
+	// Add the IP address to the interface (idempotent if already added)
+	managedLBIPs.AddAddr(cidrStr, linkDevice)
+
+	// Try to listen on this address
+	listener, err = net.Listen("tcp", address)
+	if err == nil {
+		// Success! Update the service's LoadBalancerIP field
+		Service.Spec.LoadBalancerIP = allocatedIP
+		log.Printf("%s Successfully bound to %s", ServicePrefix, address)
+		return listener
+	}
+
+	// Failed to bind - this shouldn't happen since we allocated the port
+	log.Printf("%s FAILED to bind to allocated %s - Reason: %v (unexpected, port was marked as available)", ServicePrefix, address, err)
+	ipmgr.IPPoolInstance.Release(allocatedIP, port)
+	// Only remove address if no other ports are using this IP
+	managedLBIPs.RemoveAddr(cidrStr, linkDevice)
 	return nil
 }
 
