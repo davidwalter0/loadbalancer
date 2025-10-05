@@ -45,22 +45,19 @@ PRIMARY_INTERFACE=$(./bin/getprimaryip --interface 2>/dev/null)
 
 if [ -z "$PRIMARY_IP" ]; then
   echo "Warning: Could not detect primary IP address"
-  TLS_SANS=""
-else
-  echo "Detected primary interface: $PRIMARY_INTERFACE"
-  echo "Detected primary IP: $PRIMARY_IP"
-  TLS_SANS="--tls-san $PRIMARY_IP"
+  PRIMARY_IP="127.0.0.1"
 fi
 
-# Create a new k3d cluster WITHOUT built-in load balancer
+echo "Detected primary interface: $PRIMARY_INTERFACE"
+echo "Detected primary IP: $PRIMARY_IP"
+
+# Generate k3d config from template
+echo "Generating k3d configuration..."
+sed "s/PRIMARY_IP_PLACEHOLDER/$PRIMARY_IP/g" k3d/config.yaml.template > /tmp/k3d-config.yaml
+
+# Create a new k3d cluster WITHOUT built-in load balancer using config file
 echo "Creating k3d cluster: $CLUSTER_NAME"
-k3d cluster create "$CLUSTER_NAME" \
-  --agents 2 \
-  --k3s-arg "--disable=traefik@server:0" \
-  --k3s-arg "--disable=servicelb@server:0" \
-  --no-lb \
-  --api-port 0.0.0.0:6443 \
-  $TLS_SANS
+k3d cluster create -c /tmp/k3d-config.yaml
 
 # Wait for the cluster to be ready
 echo "Waiting for cluster to be ready..."
