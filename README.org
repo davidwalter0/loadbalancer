@@ -129,6 +129,34 @@ make build
 sudo bin/loadbalancer --kubeconfig cluster/auth/kubeconfig --linkdevice eth0
 #+end_src
 
+** Utility Commands
+
+*** Get Primary Network Interface and IP
+
+The =getprimaryip= utility automatically detects the primary network interface and its IP address:
+
+#+begin_src bash :tangle no
+# Build utilities
+make utils
+
+# Show interface and IP in table format
+./bin/getprimaryip
+
+# Get only the IP address
+./bin/getprimaryip --ip
+
+# Get only the interface name
+./bin/getprimaryip --interface
+#+end_src
+
+Example output:
+#+begin_example
+INTERFACE        IP ADDRESS
+eth0             192.168.0.10
+#+end_example
+
+This utility is used by =k3d/setup-k3d-cluster.sh= to automatically add the primary IP to the Kubernetes API server certificate.
+
 ** Environment Variables
 
 The loadbalancer supports configuration via environment variables:

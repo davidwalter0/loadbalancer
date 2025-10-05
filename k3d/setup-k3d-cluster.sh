@@ -32,6 +32,26 @@ if docker ps -a | grep -q "$LB_CONTAINER_NAME"; then
   docker rm -f "$LB_CONTAINER_NAME"
 fi
 
+# Build getprimaryip tool if not already built
+if [ ! -f bin/getprimaryip ]; then
+  echo "Building getprimaryip tool..."
+  go build -o bin/getprimaryip ./cmd/getprimaryip
+fi
+
+# Detect primary interface and IP for TLS certificate
+echo "Detecting primary network interface and IP..."
+PRIMARY_IP=$(./bin/getprimaryip --ip 2>/dev/null)
+PRIMARY_INTERFACE=$(./bin/getprimaryip --interface 2>/dev/null)
+
+if [ -z "$PRIMARY_IP" ]; then
+  echo "Warning: Could not detect primary IP address"
+  TLS_SANS=""
+else
+  echo "Detected primary interface: $PRIMARY_INTERFACE"
+  echo "Detected primary IP: $PRIMARY_IP"
+  TLS_SANS="--tls-san $PRIMARY_IP"
+fi
+
 # Create a new k3d cluster WITHOUT built-in load balancer
 echo "Creating k3d cluster: $CLUSTER_NAME"
 k3d cluster create "$CLUSTER_NAME" \
@@ -39,7 +59,8 @@ k3d cluster create "$CLUSTER_NAME" \
   --k3s-arg "--disable=traefik@server:0" \
   --k3s-arg "--disable=servicelb@server:0" \
   --no-lb \
-  --api-port 0.0.0.0:6443
+  --api-port 0.0.0.0:6443 \
+  $TLS_SANS
 
 # Wait for the cluster to be ready
 echo "Waiting for cluster to be ready..."
