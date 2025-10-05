@@ -71,7 +71,9 @@ docker run -d \
   -e KUBECONFIG=/app/kubeconfig \
   -e DEBUG=true \
   -e RESTRICTED_CIDR="${RESTRICTED_CIDR:-192.168.0.224/28}" \
-  loadbalancer:latest
+  loadbalancer:latest \
+  --tag-worker-nodes
+
 
 echo "Waiting for loadbalancer to start..."
 sleep 5
