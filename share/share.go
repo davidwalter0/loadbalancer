@@ -62,6 +62,7 @@ type ForwarderCfg struct {
 	Kubernetes  bool   `json:"kubernetes"  doc:"use kubernetes dynamic endpoints from service/ns" default:"true"`
 	LinkDevice  string `json:"linkdevice"  doc:"device for load balancers external addresses"     default:""`
 	RestrictedCIDR string `json:"restricted-cidr" doc:"restricted IP range for load balancer (e.g. 192.168.0.224/28)" default:"192.168.0.224/28"`
+	TagWorkerNodes bool `json:"tag-worker-nodes" doc:"tag worker nodes with loadbalancer role" default:"false"`
 }
 
 // ClientCfg options to configure endPtDefn
@@ -88,7 +89,7 @@ type TLSCfg struct {
 func (envCfg *ServerCfg) Read() {
 	envCfg.ForwarderCfg.Read()
 	// envCfg.TLSCfg.Read()
-	
+
 	// LinkDevice can be empty now, the auto-detection will handle it
 }
 
@@ -100,10 +101,16 @@ func (envCfg *ClientCfg) Read() {
 // Read from env variables or command line flags
 func (envCfg *ForwarderCfg) Read() {
 	var err error
+
 	manager := config.NewManager()
 	if err = manager.Load(envCfg); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
+
+	// Apply environment variables AFTER manager.Load()
+	// This ensures env vars override defaults and config files
+	// Note: Command-line flags still take precedence over env vars
+	applyEnvironmentVariables(envCfg)
 }
 
 // Read from environment variables or command line flags and load

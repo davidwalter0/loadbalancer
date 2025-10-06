@@ -1,0 +1,485 @@
+#+TITLE: Little Load Balancer
+#+AUTHOR: David Walter
+#+DATE: 2025-10-04
+
+[[https://img.shields.io/github/tag/davidwalter0/loadbalancer.svg?colorB=forestgreen&label=latest&logo=version&logoColor=forestgreen]]
+
+* Load Balancing
+
+IP addresses are added to the host and traffic is routed from external
+client application to internal services. External IPs are updated and
+added to Kubernetes Services by the loadbalancer and the local host's
+linkdevice owns the CIDR block of routable addresses on the linkdevice
+subnet
+
+[[https://github.com/davidwalter0/loadbalancer/blob/master/images/load-balancer-sequence-diagram.png][LoadBalancer Sequence Diagram]]
+
+* Data Flow
+
+** External (Out of Cluster) LoadBalancer
+
+[[https://github.com/davidwalter0/loadbalancer/blob/master/images/kubernetes-loadbalancer.png][Application <-> Load Balancer <-> Kubernetes Service <-> Kubernetes Server Application]]
+
+** In Cluster LoadBalancer
+
+[[https://github.com/davidwalter0/loadbalancer/blob/master/images/kubernetes-ep-loadbalancer.png][Application <-> Load Balancer <-> Kubernetes Pod Endpoint IP <-> Kubernetes Server Application]]
+
+** Flow / Sequence Description
+
+- Connect to kubernetes cluster
+- Watch services
+  - when the Type=LoadBalancer
+    - load endpoints for the service name/namespace
+    - create a forward service listening on loadbalancer IP + port
+    - accept new connections
+    - create a "pipe" bidirectional copy to endpoint|from source
+  - when the key is deleted or the type is changed from loadbalancer
+    delete the forward service
+  - when loadBalancerIP is set e.g. if the ip hasn't been set it will
+    be added to the ethernet device specified as the LinkDevice
+    e.g. =--linkdevice eth0=
+- Watch nodes
+  - add or remove nodes from events in the queue
+  - use nodes with the label =node-role.kubernetes.io/worker=
+  - during node creation or with the label command add
+    =--node-labels=node-role.kubernetes.io/worker=
+  - use the ExternalID from the node spec as the IP endpoint
+
+Manage routes / addresses for external ip addresses
+
+- Add or remove ip addresses from the load balancer service definition
+  - add if not present
+  - maintain a map of addresses
+  - remove when the last load balancer using the address is removed
+
+- IP reuse across different ports (CIDR conservation)
+  - Multiple services can share the same IP if they use different ports
+  - Priority-based allocation: explicit IP → reuse existing IP → allocate new IP
+  - When a specific loadBalancerIP is requested, it must have the exact IP:port combination available
+  - Dynamic allocation prefers reusing existing IPs before allocating new ones
+  - Clear logging explains allocation decisions and failure reasons
+  - Conflicting IP:port requests are rejected immediately with detailed error messages
+
+* Example Use
+
+Build and run loadbalancer with superuser permissions so that
+loadbalancer can modify routes use privileged ports.
+
+You can run it with sudo local to the VMs or run on a kubernetes node
+configured with a bridged adapter (see below) and tagged as the
+=node-role.kubernetes.io/load-balancer=
+
+** Deploying with k3d (External LoadBalancer)
+
+For k3d clusters, the loadbalancer runs externally with =--network host= to access both host interfaces and the k3d bridge network.
+
+#+begin_src bash :tangle no
+# Use the provided setup script
+cd k3d
+./setup-k3d-cluster.sh
+
+# Or manually:
+k3d cluster create mycluster \
+  --agents 2 \
+  --k3s-arg "--disable=traefik@server:0" \
+  --k3s-arg "--disable=servicelb@server:0" \
+  --no-lb \
+  --api-port 0.0.0.0:6443
+
+# Run loadbalancer externally
+docker run -d \
+  --name loadbalancer \
+  --network host \
+  --cap-add NET_ADMIN \
+  --cap-add NET_RAW \
+  --cap-add NET_BIND_SERVICE \
+  -v ~/.kube/config:/app/kubeconfig:ro \
+  -e KUBERNETES=true \
+  -e KUBECONFIG=/app/kubeconfig \
+  -e RESTRICTED_CIDR=192.168.0.192/28 \
+  -e TAG_WORKER_NODES=true \
+  loadbalancer:latest \
+  --tag-worker-nodes
+#+end_src
+
+Key points:
+- =--no-lb= disables k3d's built-in load balancer
+- =--disable=servicelb@server:0= disables k3s servicelb (klipper-lb)
+- =--network host= gives container access to host network interfaces
+- Loadbalancer uses NodePorts to reach pod endpoints
+- kube-proxy creates iptables rules for externalIPs automatically
+
+** Build and Push
+
+#+begin_src bash :tangle no
+LINK_DEVICE=eth2 DOCKER_USER=davidwalter IMAGE=loadbalancer make build image yaml push push-tag apply
+#+end_src
+
+** Build and Push to Localhost Registry
+
+#+begin_src bash :tangle no
+make local-image     # Build and tag as localhost:5000/loadbalancer:latest
+make local-push      # Build and push to localhost:5000/loadbalancer:latest
+#+end_src
+
+** Build and Run Locally
+
+#+begin_src bash :tangle no
+make build
+sudo bin/loadbalancer --kubeconfig cluster/auth/kubeconfig --linkdevice eth0
+#+end_src
+
+** Utility Commands
+
+*** Get Primary Network Interface and IP
+
+The =getprimaryip= utility automatically detects the primary network interface and its IP address:
+
+#+begin_src bash :tangle no
+# Build utilities
+make utils
+
+# Show interface and IP in table format
+./bin/getprimaryip
+
+# Get only the IP address
+./bin/getprimaryip --ip
+
+# Get only the interface name
+./bin/getprimaryip --interface
+#+end_src
+
+Example output:
+#+begin_example
+INTERFACE        IP ADDRESS
+eth0             192.168.0.10
+#+end_example
+
+This utility is used by =k3d/setup-k3d-cluster.sh= to automatically add the primary IP to the Kubernetes API server certificate.
+
+** Environment Variables
+
+The loadbalancer supports configuration via environment variables:
+
+#+begin_src bash :tangle no
+export RESTRICTED_CIDR=192.168.0.192/28    # Restrict IP pool to specific CIDR
+export TAG_WORKER_NODES=true                # Auto-label nodes with worker role
+export LINKDEVICE=eth0                      # Network interface (auto-detected if not set)
+bin/loadbalancer
+#+end_src
+
+** Command-line Flags
+
+#+begin_src bash :tangle no
+bin/loadbalancer --restricted-cidr=192.168.0.192/28 --tag-worker-nodes --linkdevice=eth0
+#+end_src
+
+*Configuration precedence:* defaults < config files < environment variables < command-line flags
+
+** Run Echo Service
+
+Run an echo service on port 8888
+
+#+begin_src bash :tangle no
+kubectl apply -f https://raw.githubusercontent.com/davidwalter0/echo/master/daemonset.yaml
+#+end_src
+
+Then create and modify the services like the following
+
+#+begin_src yaml :tangle no
+# ------------------------- Service ------------------------- #
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo
+  labels:
+    app: echo
+spec:
+  selector:
+    app: echo
+  ports:
+  - port: 8888
+    name: echo
+#+end_src
+
+Then update it with a definition similar to the following =kubectl
+apply -f service.yaml= to update that service, with LOADBALANCER running
+outside the cluster the accessible port will be a *Port*. That
+NodePort will be the upstream *sink* add a new external port using the
+kubernetes inserted NodePort value as the destination
+
+#+begin_src yaml :tangle no
+# ------------------------- Service ------------------------- #
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo
+  labels:
+    app: echo
+spec:
+  selector:
+    app: echo
+  ports:
+  - port: 8888
+    name: echo
+  type: LoadBalancer
+#+end_src
+
+Now you can =curl loadbalancerIP:8888= where loadbalancerIP is the
+host the loadbalancer is running on.
+
+** IP Management
+
+IPs will be added when needed and ports assigned based on the
+service port. IPs will be added on the specified LinkDevice (ethernet
+device for external routes). A service description with an IP address
+adds the ip to the LinkDevice
+
+#+begin_src yaml :tangle no
+# ------------------------- Service ------------------------- #
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo5
+  labels:
+    app: echo
+spec:
+  selector:
+    app: echo
+  ports:
+  - port: 8888
+    name: echo
+  loadBalancerIP: 192.168.0.226
+  type: LoadBalancer
+#+end_src
+
+Now you can =curl loadbalancerIP:8888= where loadbalancerIP is the
+host the loadbalancer is running on.
+
+The ip management is similar to
+
+The ip command =ip addr add ip/bits dev linkdevice= =ip addr add
+192.168.0.226/24 dev linkdevice=, but derives the CIDR mask bits from
+the existing route information on the specified link device.
+
+The reciprocal removal uses the existing CIDR definition when there
+are no more listeners on the ip.
+
+=ip addr add ip/bits dev linkdevice=
+
+* List Services
+
+List services and their type
+
+#+begin_src bash :tangle no
+printf "$(kubectl get svc --all-namespaces --output=go-template --template='{{range .items}}{{.metadata.namespace}}/{{.metadata.name}}:{{.spec.type}} LB:{{ .spec.loadBalancerIP }} ExternalIPs{{.spec.externalIPs}}\n{{end}}')"
+#+end_src
+
+Service addresses for load balancers
+
+#+begin_src bash :tangle no
+printf "$(kubectl get svc --all-namespaces --output=go-template --template='{{range .items}}{{if eq .spec.type "LoadBalancer"}}{{.metadata.namespace}}/{{.metadata.name}}:{{.spec.type}} LB:{{ .spec.loadBalancerIP }} ExternalIPs{{.spec.externalIPs}}\n{{end}}{{end}}')"
+#+end_src
+
+* Dashboard
+
+Another example enabling a routable dashboard assuming you've already
+created the certificates for the dashboard
+
+#+begin_src bash :tangle no
+kubectl create secret generic kubernetes-dashboard-certs --from-file=cluster/tls --namespace=kube-system
+kubectl apply -f examples/manifests/kubernetes-dashboard.yaml
+kubectl apply -f examples/manifests/kubernetes-dashboard-lb.yaml
+#+end_src
+
+The dashboard should be visible on the loadBalancerIP and port specified in the =kubernetes-dashboard-lb.yaml=
+
+From the yaml file that would be loadBalancerIP: 192.168.0.251 and
+port: 443 so the application will be exposed on the port and
+address 192.168.0.251:443
+
+#+begin_src yaml :tangle no
+  ports:
+  - port: 443
+    targetPort: 8443
+    name: kubernetes-dashboard
+  loadBalancerIP: 192.168.0.251
+  type: LoadBalancer
+#+end_src
+
+* Testing
+
+** E2E Tests
+
+End-to-end tests are available in =test/e2e/= directory to validate loadbalancer behavior:
+
+*** IP Conflict Test
+
+Located in =test/e2e/ip-conflict/=, this test validates IP:port conflict handling:
+
+#+begin_src bash :tangle no
+cd test/e2e/ip-conflict
+./run-test.sh
+#+end_src
+
+The test scenario:
+1. Service 1: Dynamic IP allocation on port 80 (succeeds)
+2. Service 2: Explicit IP that conflicts with Service 1 on port 80 (fails with clear error)
+3. Service 3: Dynamic IP allocation on port 80 (succeeds with next available IP)
+
+Expected behavior:
+- Service 1 gets allocated an IP (e.g., 192.168.0.194:80)
+- Service 2 fails with: "FAILED to allocate requested LoadBalancerIP 192.168.0.194:80 - Reason: IP:port already allocated"
+- Service 3 gets allocated the next IP (e.g., 192.168.0.195:80)
+
+* Bugs
+
+- Unique IP assignment fails
+  - When 2 services attempt to use the same address log the second
+    will fail with an error then ignore the service.
+
+* TODO Features / Behaviour
+
+Moved to complete and testing
+
+- [X] Load active devices (use --linkdevice to specify the active device)
+- [X] Load active primary ip address per device
+  - must specify the device on the command line --linkdevice
+- [X] set default ip address per device
+- [X] Check for new load balancer request's ip match to a device
+  default subnet and add if not found
+- [X] Catch/recover from errors associated with missing IP, illegal
+  IP/CIDR, address in use and report accordingly
+  - check valid ip address ignore if invalid
+- [X] Get endpoint node list by service
+  - marry nodes to nodeports as service endpoints for out of cluster
+- [X] Create endpoint watcher similar to service watch
+  - out of cluster use node watcher
+- [X] All namespaces through one load balancer
+- [X] Update service ExternalIPs with the ip address of the load balancer
+- [X] Add signal handler to cleanup ExternalIPs on shutown sigint, sigterm
+- [X] Run in a managed Kubernetes managed deployment pod inside cluster
+- [X] IP address endpoint assignment by collecting node names from
+  kubernetes cluster
+  - [X] Complete
+- [X] Test InCluster endpoint activity
+  - [X] Complete
+- [X] Port-aware IP reuse for CIDR conservation
+  - [X] AllocateWithPort() prioritizes reusing existing IPs
+  - [X] Clear logging with allocation reasons
+  - [X] Explicit IP:port conflict detection
+- [X] External deployment for k3d clusters
+  - [X] Host networking support
+  - [X] Disable k3d and k3s servicelb
+  - [X] E2E test suite for IP conflict scenarios
+
+* Possible Future Work
+
+- [ ] research netlink network route/device watcher for both insertion
+  of physical hardware or default address change
+- [ ] allow multiple ports per service to be forwarded
+
+* Examples
+
+loadbalancer/examples/manifests:
+
+Ensure that the loadBalancerIP addresses that you use are in the
+subnet of the device specified for your subnet and not reserved, or if
+using a home router, outside the range the router will offer to
+devices on the network
+
+Many of the simple examples are based on the echo service
+
+#+begin_src bash :tangle no
+kubectl apply -f examples/manifests/echodaemonset.yaml
+#+end_src
+
+- kubernetes-dashboard-lb.yaml
+- kubernetes-dashboard.yaml
+- service-lb-new-addr.yaml
+  - load balancer with a specified address loadBalancerIP=
+- service-lb.yaml
+  - load balancer without a specified address
+- service.yaml
+
+If you run these in a locally configured VM with a bridged interface
+the dynamically allocated ip addresses are visible to the external
+network while isolating network changes from the host machine in the
+VM.
+
+** Running in Cluster
+
+- Running in a managed Kubernetes deployment pod inside the cluster
+  - Manage ip addresses on linkdevice
+  - Add address to and remove address from the linkdevice and use the
+    address specified in the service's loadBalancerIP field as the
+    service's externalIP
+  - Example files: enable cluster role and configure deployment
+    - kubectl -f examples/manifests/loadbalancerdeployment.yaml -f examples/manifests/loadbalancerclusterrole.yaml
+    - loadbalancerdeployment.yaml
+    - loadbalancerclusterrole.yaml
+  - Run inside a manually configured bridge in virtualbox or a
+    bridged interface with vagrant
+    - =https://www.vagrantup.com/docs/networking/public_network.html=
+    - in Vagrant you can select the interface to use as the bridge and
+      add the bridge when provisioning the VM
+      - config.vm.network :public_network, :public_network => "wlan0"
+      - config.vm.network :public_network, :public_network => "eth0"
+      - answer the prompt with the bridge interface number
+  - Run in cluster with host network privilege inside a kubernetes
+    managed pod and a bridge interface specified as --linkdevice
+    - label the node =node-role.kubernetes.io/load-balancer="primary"=
+    - run a deployment or a replication set with a replica count of one
+      replicas: 1
+    - use the bridge interface device to apply the changes
+    - configure permissions if the cluster has enabled
+    - loadbalancer configures ips on the bridged interface supplied on the
+      commandline
+
+* Configuring Manifests
+
+Configuring manifests and nodes for scheduling affinity / anti affinity
+
+(bootkube ... multi-mode filesystem configuration reference)
+
+Modify calico.yaml and kube-proxy.yaml in cluster/manifests
+
+#+begin_src yaml :tangle no
+      tolerations:
+        # Allow the pod to run on master nodes
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+        # Allow the pod to run on loadbalancer nodes
+        - key: node-role.kubernetes.io/loadbalancer
+          effect: NoSchedule
+#+end_src
+
+Force scheduling load balancer only on
+node-role.kubernetes.io/loadbalancer labeled node and allow scheduling
+with toleration
+
+#+begin_src yaml :tangle no
+      tolerations:
+        - key: node-role.kubernetes.io/loadbalancer
+          operator: Exists
+          effect: NoSchedule
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/loadbalancer
+                operator: Exists
+#+end_src
+
+Taint the load balancer node to repel (give scheduling anti affinity to all but those pods with manifests)
+
+Label the node for scheduling affinity, taint for general anti affinity
+
+#+begin_src bash :tangle no
+          --node-labels=node-role.kubernetes.io/loadbalancer=primary \
+          --register-with-taints=node-role.kubernetes.io/loadbalancer=:NoSchedule \
+#+end_src

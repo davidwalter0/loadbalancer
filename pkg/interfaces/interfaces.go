@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"strings"
 )
 
@@ -35,29 +34,32 @@ type InterfaceInfo struct {
 	IPv4Addrs   []string
 }
 
-// DetectWirelessInterfaces uses the 'iw' command to detect wireless interfaces
+// DetectWirelessInterfaces checks sysfs to detect wireless interfaces (no external commands)
 func DetectWirelessInterfaces() (map[string]bool, error) {
-	// Run 'iw dev' to list wireless interfaces
-	cmd := exec.Command("iw", "dev")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to run 'iw dev': %v", err)
-	}
-	
-	// Parse output to find interface names
-	outputStr := string(output)
-	lines := strings.Split(outputStr, "\n")
-	
 	wirelessIfaces := make(map[string]bool)
-	
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "Interface ") {
-			ifaceName := strings.TrimPrefix(line, "Interface ")
-			wirelessIfaces[ifaceName] = true
+
+	// Get all network interfaces
+	netIfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check each interface for wireless directory in sysfs
+	for _, iface := range netIfaces {
+		// Check if /sys/class/net/<iface>/wireless exists
+		wirelessPath := fmt.Sprintf("/sys/class/net/%s/wireless", iface.Name)
+		if _, err := os.Stat(wirelessPath); err == nil {
+			wirelessIfaces[iface.Name] = true
+			continue
+		}
+
+		// Alternative: Check if /sys/class/net/<iface>/phy80211 exists
+		phy80211Path := fmt.Sprintf("/sys/class/net/%s/phy80211", iface.Name)
+		if _, err := os.Stat(phy80211Path); err == nil {
+			wirelessIfaces[iface.Name] = true
 		}
 	}
-	
+
 	return wirelessIfaces, nil
 }
 
@@ -69,11 +71,10 @@ func GetAllInterfaces() ([]InterfaceInfo, error) {
 		return nil, fmt.Errorf("failed to get network interfaces: %v", err)
 	}
 	
-	// Detect wireless interfaces
+	// Detect wireless interfaces using sysfs (no external commands)
 	wirelessIfaces, err := DetectWirelessInterfaces()
 	if err != nil {
-		// Continue without wireless detection if 'iw' fails
-		fmt.Printf("Warning: failed to detect wireless interfaces: %v\n", err)
+		return nil, fmt.Errorf("failed to detect wireless interfaces: %v", err)
 	}
 	
 	var interfaces []InterfaceInfo
@@ -201,42 +202,30 @@ func CheckInterfaceType(ifaceName string) (string, bool, bool, error) {
 		description = "Physical (by naming convention)"
 	}
 	
-	// Try to use ethtool if available for more detailed info
-	ethtoolAvailable := isCommandAvailable("ethtool")
-	if ethtoolAvailable {
-		cmd := exec.Command("ethtool", "-i", ifaceName)
-		output, err := cmd.CombinedOutput()
-		if err == nil && strings.Contains(string(output), "bus-info:") {
-			isPhysical = true
-			description = "Physical"
-			
-			// Extract driver information if available
-			lines := strings.Split(string(output), "\n")
-			for _, line := range lines {
-				if strings.HasPrefix(line, "driver:") {
-					driver := strings.TrimSpace(strings.TrimPrefix(line, "driver:"))
-					description = fmt.Sprintf("Physical (%s)", driver)
-					break
-				}
-			}
-			
+	// Try to get driver information from sysfs (no external commands)
+	driverPath := fmt.Sprintf("/sys/class/net/%s/device/driver", ifaceName)
+	if driverLink, err := os.Readlink(driverPath); err == nil {
+		isPhysical = true
+		// Extract driver name from path like: ../../../bus/pci/drivers/r8152
+		parts := strings.Split(driverLink, "/")
+		if len(parts) > 0 {
+			driverName := parts[len(parts)-1]
+			description = fmt.Sprintf("Physical (%s)", driverName)
 			return description, isPhysical, isVirtual, nil
 		}
+		description = "Physical"
+		return description, isPhysical, isVirtual, nil
 	}
-	
-	// If ethtool is not available or didn't provide results, check sysfs
-	if isCommandAvailable("readlink") {
-		// Check if it's a USB device by looking at sysfs
-		cmd := exec.Command("sh", "-c", fmt.Sprintf("readlink -f /sys/class/net/%s/device 2>/dev/null | grep -q usb", ifaceName))
-		if err := cmd.Run(); err == nil {
+
+	// Check device subsystem to determine if USB or PCI (pure Go sysfs)
+	subsystemPath := fmt.Sprintf("/sys/class/net/%s/device/subsystem", ifaceName)
+	if subsystemLink, err := os.Readlink(subsystemPath); err == nil {
+		if strings.Contains(subsystemLink, "usb") {
 			isPhysical = true
 			description = "Physical (USB)"
 			return description, isPhysical, isVirtual, nil
 		}
-		
-		// Check for PCI devices through sysfs as a fallback to ethtool
-		cmd = exec.Command("sh", "-c", fmt.Sprintf("readlink -f /sys/class/net/%s/device 2>/dev/null | grep -q pci", ifaceName))
-		if err := cmd.Run(); err == nil {
+		if strings.Contains(subsystemLink, "pci") {
 			isPhysical = true
 			if description == "Physical (by naming convention)" {
 				description = "Physical (PCI)"
@@ -258,12 +247,6 @@ func CheckInterfaceType(ifaceName string) (string, bool, bool, error) {
 	}
 	
 	return description, isPhysical, isVirtual, nil
-}
-
-// isCommandAvailable checks if a command is available on the system
-func isCommandAvailable(cmd string) bool {
-	_, err := exec.LookPath(cmd)
-	return err == nil
 }
 
 // GetPreferredInterface returns the best interface to use

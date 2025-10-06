@@ -387,8 +387,9 @@ func (ml *ManagedListener) Close() {
 				// Only release if it's not the default CIDR base IP
 				if ipmgr.DefaultCIDR != nil && ip != ipmgr.DefaultCIDR.IP {
 					if ipmgr.IPPoolInstance != nil {
-						ipmgr.IPPoolInstance.Release(ip)
-						log.Printf("Released IP %s back to pool for service %s", ip, ml.Key)
+						port := fmt.Sprintf("%d", ml.Port)
+						ipmgr.IPPoolInstance.Release(ip, port)
+						log.Printf("Released IP %s:%s back to pool for service %s", ip, port, ml.Key)
 					}
 				}
 			}
@@ -415,13 +416,32 @@ func (ml *ManagedListener) SetExternalIP() {
 		panic("Clientset nil, can't SetExternalIP")
 	}
 	client := ml.Clientset.CoreV1().Services(ml.Service.ObjectMeta.Namespace)
-	ml.refreshServiceSpec(client)
-	var ip = ipmgr.IP
-	if ml.CIDR != nil && len(ml.CIDR.IP) > 0 {
-		ip = ml.CIDR.IP
+
+	// Get the actual IP from the listener address (most reliable source)
+	var ip string
+	if ml.Listener != nil {
+		addr := ml.Listener.Addr().String()
+		// Extract IP from "IP:PORT" format
+		if host, _, err := net.SplitHostPort(addr); err == nil {
+			ip = host
+		}
 	}
+
+	// Fallback if we couldn't get IP from listener
+	if ip == "" {
+		ip = ipmgr.IP
+		if ml.CIDR != nil && len(ml.CIDR.IP) > 0 {
+			ip = ml.CIDR.IP
+		}
+	}
+
+	// Refresh service spec from K8s to get latest resourceVersion
+	ml.refreshServiceSpec(client)
+
+	// Set ExternalIPs to the actual listening IP
 	ml.Service.Spec.ExternalIPs = []string{ip}
-	log.Println("SetExternalIP", ml.Service.Spec.ExternalIPs)
+	log.Printf("SetExternalIP %s (Listener: %s)", ml.Service.Spec.ExternalIPs, ml.Listener.Addr())
+
 	if _, err := client.Update(context.Background(), ml.Service, metav1.UpdateOptions{}); err != nil {
 		log.Println("Problem with client update:", err)
 	}

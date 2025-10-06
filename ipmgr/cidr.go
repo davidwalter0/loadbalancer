@@ -154,7 +154,8 @@ func (c *CIDR) CIDRDevString() string {
 // IPPool manages IP allocation from a CIDR range
 type IPPool struct {
 	cidr      *net.IPNet
-	allocated map[string]bool
+	allocated map[string]bool // IP address allocation tracking
+	ports     map[string]map[string]bool // IP -> port -> allocated (for port tracking)
 	mu        sync.Mutex
 }
 
@@ -168,16 +169,22 @@ func NewIPPool(cidr string) (*IPPool, error) {
 	return &IPPool{
 		cidr:      ipNet,
 		allocated: make(map[string]bool),
+		ports:     make(map[string]map[string]bool),
 	}, nil
 }
 
-// Allocate gets the next available IP from the pool
+// Allocate gets the next available IP from the pool (for dynamic allocation)
+// This allocates the entire IP, not a specific port
 func (p *IPPool) Allocate() (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// Create a copy of the network IP to avoid modifying the original
+	startIP := make(net.IP, len(p.cidr.IP))
+	copy(startIP, p.cidr.IP)
+
 	// Iterate through all IPs in the CIDR range
-	for ip := p.cidr.IP.Mask(p.cidr.Mask); p.cidr.Contains(ip); incIP(ip) {
+	for ip := startIP.Mask(p.cidr.Mask); p.cidr.Contains(ip); incIP(ip) {
 		ipStr := ip.String()
 
 		// Skip network and broadcast addresses for /28 and smaller
@@ -188,18 +195,138 @@ func (p *IPPool) Allocate() (string, error) {
 		// Check if already allocated
 		if !p.allocated[ipStr] {
 			p.allocated[ipStr] = true
+			// Initialize port map for this IP
+			if p.ports[ipStr] == nil {
+				p.ports[ipStr] = make(map[string]bool)
+			}
 			return ipStr, nil
 		}
+		// Continue to next IP if this one is already allocated
 	}
 
 	return "", fmt.Errorf("no available IPs in pool")
 }
 
-// Release returns an IP to the pool
-func (p *IPPool) Release(ip string) {
+// AllocateWithPort finds an IP with the requested port available
+// It prioritizes reusing already-allocated IPs before allocating new ones
+// Returns the IP and whether it was reused (true) or newly allocated (false)
+func (p *IPPool) AllocateWithPort(port string) (ip string, reused bool, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	delete(p.allocated, ip)
+
+	// Create a copy of the network IP to avoid modifying the original
+	startIP := make(net.IP, len(p.cidr.IP))
+	copy(startIP, p.cidr.IP)
+
+	// First pass: Try to reuse an already-allocated IP with this port available
+	for ipStr := range p.allocated {
+		// Skip if port is already in use on this IP
+		if p.ports[ipStr] != nil && p.ports[ipStr][port] {
+			continue
+		}
+
+		// Found an allocated IP with the port available
+		if p.ports[ipStr] == nil {
+			p.ports[ipStr] = make(map[string]bool)
+		}
+		p.ports[ipStr][port] = true
+		return ipStr, true, nil
+	}
+
+	// Second pass: No reuse possible, allocate a new IP
+	for ip := startIP.Mask(p.cidr.Mask); p.cidr.Contains(ip); incIP(ip) {
+		ipStr := ip.String()
+
+		// Skip network and broadcast addresses
+		if p.isNetworkOrBroadcast(ip) {
+			continue
+		}
+
+		// Skip already allocated IPs (we already checked them above)
+		if p.allocated[ipStr] {
+			continue
+		}
+
+		// Found a new IP
+		p.allocated[ipStr] = true
+		if p.ports[ipStr] == nil {
+			p.ports[ipStr] = make(map[string]bool)
+		}
+		p.ports[ipStr][port] = true
+		return ipStr, false, nil
+	}
+
+	return "", false, fmt.Errorf("no available IPs for port %s in pool", port)
+}
+
+// AllocateSpecific allocates a specific IP:port combination if it's available in the pool
+// Multiple services can share the same IP if they use different ports
+func (p *IPPool) AllocateSpecific(requestedIP, port string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Parse the requested IP
+	ip := net.ParseIP(requestedIP)
+	if ip == nil {
+		return fmt.Errorf("invalid IP address: %s", requestedIP)
+	}
+
+	// Check if IP is in the CIDR range
+	if !p.cidr.Contains(ip) {
+		return fmt.Errorf("IP %s is not in CIDR range %s", requestedIP, p.cidr.String())
+	}
+
+	// Check if it's a network or broadcast address
+	if p.isNetworkOrBroadcast(ip) {
+		return fmt.Errorf("IP %s is a network or broadcast address", requestedIP)
+	}
+
+	// Initialize port map for this IP if it doesn't exist
+	if p.ports[requestedIP] == nil {
+		p.ports[requestedIP] = make(map[string]bool)
+	}
+
+	// Check if this IP:port combination is already allocated
+	if p.ports[requestedIP][port] {
+		return fmt.Errorf("IP:port %s:%s is already allocated", requestedIP, port)
+	}
+
+	// Allocate the IP:port combination
+	p.allocated[requestedIP] = true // Mark IP as in use
+	p.ports[requestedIP][port] = true // Mark port as in use on this IP
+	return nil
+}
+
+// RegisterPort registers a port for an already-allocated IP
+// Used when an IP is allocated via Allocate() and we need to track the port
+func (p *IPPool) RegisterPort(ip, port string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Initialize port map for this IP if it doesn't exist
+	if p.ports[ip] == nil {
+		p.ports[ip] = make(map[string]bool)
+	}
+
+	p.ports[ip][port] = true
+}
+
+// Release returns an IP:port combination to the pool
+// If this is the last port on the IP, the IP is also freed
+func (p *IPPool) Release(ip, port string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Release the specific port
+	if p.ports[ip] != nil {
+		delete(p.ports[ip], port)
+
+		// If no more ports are allocated on this IP, free the IP entirely
+		if len(p.ports[ip]) == 0 {
+			delete(p.ports, ip)
+			delete(p.allocated, ip)
+		}
+	}
 }
 
 // isNetworkOrBroadcast checks if IP is network or broadcast address

@@ -13,12 +13,12 @@ the configured CIDR pool.
 
 ** Diagrams in This Document
 
-| Diagram                        | File                        | Description                                      |
-|--------------------------------+-----------------------------+--------------------------------------------------|
-| Network Architecture           | network-architecture.png    | Shows host/k3d network topology                  |
-| Connection Flow                | connection-flow.png         | Sequence diagram of TCP proxy flow               |
-| Service Binding Flow           | service-binding-flow.png    | Activity diagram of IP allocation with retry     |
-| IP Lifecycle                   | ip-lifecycle.png            | State diagram of IP allocation/release lifecycle |
+| Diagram              | File                     | Description                                      |
+|----------------------+--------------------------+--------------------------------------------------|
+| Network Architecture | network-architecture.png | Shows host/k3d network topology                  |
+| Connection Flow      | connection-flow.png      | Sequence diagram of TCP proxy flow               |
+| Service Binding Flow | service-binding-flow.png | Activity diagram of IP allocation with retry     |
+| IP Lifecycle         | ip-lifecycle.png         | State diagram of IP allocation/release lifecycle |
 
 To generate diagrams, position cursor on each =#+begin_src plantuml= block and press =C-c C-c=.
 
@@ -108,23 +108,26 @@ end note
 
 ** IP Pool Management
 
-The IP pool manager maintains a thread-safe allocation table for IP addresses
-within a configured CIDR range. It tracks which IPs are currently allocated and
-provides methods for allocation and release.
+The IP pool manager maintains a thread-safe allocation table for IP:port
+combinations within a configured CIDR range. It tracks which IP addresses and
+ports are currently allocated, allowing multiple services to share the same IP
+on different ports.
 
 *** Key Components
 
-- =IPPool= :: Thread-safe IP allocation manager
+- =IPPool= :: Thread-safe IP:port allocation manager
 - =IPPoolInstance= :: Global instance initialized from DefaultCIDR
-- =Allocate()= :: Returns next available IP from the pool
-- =Release(ip)= :: Returns IP to the pool for reuse
+- =Allocate()= :: Returns next available IP from the pool (for dynamic allocation)
+- =AllocateSpecific(ip, port)= :: Allocates a specific IP:port combination
+- =Release(ip, port)= :: Returns IP:port to the pool for reuse
+- =RegisterPort(ip, port)= :: Registers a port for an already-allocated IP
 
 ** Location in Codebase
 
-- =ipmgr/cidr.go:154-230= :: IPPool type and methods
+- =ipmgr/cidr.go:154-295= :: IPPool type and methods
 - =ipmgr/defaults.go:38-39= :: Global IPPoolInstance variable
 - =mgr/ipmgrinit.go:105-111= :: IP pool initialization
-- =mgr/open.go:83-153= :: IP allocation with retry logic
+- =mgr/open.go:83-193= :: IP allocation with retry logic and specific IP support
 - =mgr/listener.go:384-395= :: IP cleanup on listener close
 
 * IP Allocation Process
@@ -302,15 +305,22 @@ end note
 
 #+begin_src go :tangle no :results org
 type IPPool struct {
-    cidr      *net.IPNet           // CIDR range (e.g., 192.168.0.224/28)
-    allocated map[string]bool      // Tracks allocated IPs
-    mu        sync.Mutex            // Thread-safe access
+    cidr      *net.IPNet                  // CIDR range (e.g., 192.168.0.224/28)
+    allocated map[string]bool             // IP address allocation tracking
+    ports     map[string]map[string]bool  // IP -> port -> allocated (for port tracking)
+    mu        sync.Mutex                  // Thread-safe access
 }
 #+end_src
 
-** Allocation Algorithm
+This structure allows multiple services to share the same IP address on different
+ports. The =allocated= map tracks which IPs are in use, while the =ports= map
+tracks which specific ports are allocated on each IP.
 
-The allocation algorithm iterates through all IPs in the CIDR range, skipping:
+** Allocation Algorithms
+
+*** Dynamic IP Allocation
+
+The dynamic allocation algorithm iterates through all IPs in the CIDR range, skipping:
 - Network address (first IP)
 - Broadcast address (last IP)
 - Already allocated IPs
@@ -320,8 +330,12 @@ func (p *IPPool) Allocate() (string, error) {
     p.mu.Lock()
     defer p.mu.Unlock()
 
+    // Create a copy of the network IP to avoid modifying the original
+    startIP := make(net.IP, len(p.cidr.IP))
+    copy(startIP, p.cidr.IP)
+
     // Iterate through CIDR range
-    for ip := p.cidr.IP.Mask(p.cidr.Mask); p.cidr.Contains(ip); incIP(ip) {
+    for ip := startIP.Mask(p.cidr.Mask); p.cidr.Contains(ip); incIP(ip) {
         ipStr := ip.String()
 
         // Skip network and broadcast
@@ -332,6 +346,10 @@ func (p *IPPool) Allocate() (string, error) {
         // Check if available
         if !p.allocated[ipStr] {
             p.allocated[ipStr] = true
+            // Initialize port map for this IP
+            if p.ports[ipStr] == nil {
+                p.ports[ipStr] = make(map[string]bool)
+            }
             return ipStr, nil
         }
     }
@@ -340,25 +358,78 @@ func (p *IPPool) Allocate() (string, error) {
 }
 #+end_src
 
-** Release Mechanism
+*** Specific IP:Port Allocation
 
-When a service is deleted or its listener closes, the IP is released back to the
-pool in =mgr/listener.go:384-395=:
+When a service specifies =spec.loadBalancerIP=, the system allocates that specific
+IP with the service's port. Multiple services can share the same IP if they use
+different ports.
 
 #+begin_src go :tangle no :results org
-// Release the allocated IP back to the pool before closing
-if ml.Service != nil && ml.Service.Spec.LoadBalancerIP != "" {
-    ip := ml.Service.Spec.LoadBalancerIP
+func (p *IPPool) AllocateSpecific(requestedIP, port string) error {
+    p.mu.Lock()
+    defer p.mu.Unlock()
 
-    // Only release if it's not the default CIDR base IP
-    if ipmgr.DefaultCIDR != nil && ip != ipmgr.DefaultCIDR.IP {
-        if ipmgr.IPPoolInstance != nil {
-            ipmgr.IPPoolInstance.Release(ip)
-            log.Printf("Released IP %s back to pool for service %s", ip, ml.Key)
+    // Parse and validate the requested IP
+    ip := net.ParseIP(requestedIP)
+    if ip == nil {
+        return fmt.Errorf("invalid IP address: %s", requestedIP)
+    }
+
+    // Check if IP is in the CIDR range
+    if !p.cidr.Contains(ip) {
+        return fmt.Errorf("IP %s is not in CIDR range %s", requestedIP, p.cidr.String())
+    }
+
+    // Check if it's a network or broadcast address
+    if p.isNetworkOrBroadcast(ip) {
+        return fmt.Errorf("IP %s is a network or broadcast address", requestedIP)
+    }
+
+    // Initialize port map for this IP if it doesn't exist
+    if p.ports[requestedIP] == nil {
+        p.ports[requestedIP] = make(map[string]bool)
+    }
+
+    // Check if this IP:port combination is already allocated
+    if p.ports[requestedIP][port] {
+        return fmt.Errorf("IP:port %s:%s is already allocated", requestedIP, port)
+    }
+
+    // Allocate the IP:port combination
+    p.allocated[requestedIP] = true       // Mark IP as in use
+    p.ports[requestedIP][port] = true     // Mark port as in use on this IP
+    return nil
+}
+#+end_src
+
+** Release Mechanism
+
+When a service is deleted or its listener closes, the IP:port combination is
+released back to the pool. If this is the last port using that IP, the IP itself
+is also freed.
+
+#+begin_src go :tangle no :results org
+func (p *IPPool) Release(ip, port string) {
+    p.mu.Lock()
+    defer p.mu.Unlock()
+
+    // Release the specific port
+    if p.ports[ip] != nil {
+        delete(p.ports[ip], port)
+
+        // If no more ports are allocated on this IP, free the IP entirely
+        if len(p.ports[ip]) == 0 {
+            delete(p.ports, ip)
+            delete(p.allocated, ip)
         }
     }
 }
 #+end_src
+
+This mechanism ensures that:
+- Multiple services can share an IP on different ports
+- IPs are only fully released when all ports are freed
+- The network interface address remains until all services on that IP are deleted
 
 * Error Detection
 
@@ -388,17 +459,17 @@ func isAddressInUse(err error) bool {
 
 ** Example: /28 CIDR (192.168.0.224/28)
 
-| Purpose          | Address       | Notes                    |
-|------------------+---------------+--------------------------|
-| Network Address  | 192.168.0.224 | Skipped (not allocated)  |
-| Usable IP 1      | 192.168.0.225 | First allocatable IP     |
-| Usable IP 2      | 192.168.0.226 | Second allocatable IP    |
-| ...              | ...           | ...                      |
-| Usable IP 14     | 192.168.0.238 | Last allocatable IP      |
-| Broadcast        | 192.168.0.239 | Skipped (not allocated)  |
-|------------------+---------------+--------------------------|
-| Total IPs        | 16            |                          |
-| Usable IPs       | 14            | Available for allocation |
+| Purpose         |       Address | Notes                    |
+|-----------------+---------------+--------------------------|
+| Network Address | 192.168.0.224 | Skipped (not allocated)  |
+| Usable IP 1     | 192.168.0.225 | First allocatable IP     |
+| Usable IP 2     | 192.168.0.226 | Second allocatable IP    |
+| ...             |           ... | ...                      |
+| Usable IP 14    | 192.168.0.238 | Last allocatable IP      |
+| Broadcast       | 192.168.0.239 | Skipped (not allocated)  |
+|-----------------+---------------+--------------------------|
+| Total IPs       |            16 |                          |
+| Usable IPs      |            14 | Available for allocation |
 
 ** Supported CIDR Sizes
 
@@ -486,6 +557,103 @@ This creates a transparent TCP proxy that:
 - Copies bytes in both directions simultaneously
 - Doesn't parse or modify HTTP/TCP content
 - Handles connection cleanup automatically
+
+* IP Sharing Between Services
+
+** Overview
+
+The load balancer supports multiple services sharing the same external IP address
+on different ports. This is useful for:
+- Conserving IP addresses in limited IP pools
+- Hosting multiple protocols on the same IP (e.g., HTTP on port 80, HTTPS on 443)
+- Grouping related services under a single IP
+
+** Usage Examples
+
+*** Example 1: HTTP and HTTPS on Same IP
+
+#+begin_src yaml :tangle no
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-http
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.0.226
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: webapp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-https
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.0.226  # Same IP, different port
+  ports:
+  - port: 443
+    targetPort: 8443
+  selector:
+    app: webapp
+#+end_src
+
+*** Example 2: Multiple Protocols on Same IP
+
+#+begin_src yaml :tangle no
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-http
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.0.227
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    app: myapp
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-grpc
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.0.227  # Same IP, different port
+  ports:
+  - port: 9090
+    targetPort: 9090
+  selector:
+    app: myapp
+#+end_src
+
+** Dynamic vs Static IP Allocation
+
+*** Static IP Allocation (with IP sharing)
+
+When =spec.loadBalancerIP= is specified:
+- The load balancer attempts to bind to that specific IP:port combination
+- Multiple services can use the same IP if they use different ports
+- The IP:port combination must be unique
+- Fails if the IP:port is already allocated
+
+*** Dynamic IP Allocation (each service gets its own IP)
+
+When =spec.loadBalancerIP= is NOT specified:
+- The load balancer allocates the next available IP from the pool
+- Each dynamically allocated service gets its own unique IP
+- No IP sharing occurs with dynamic allocation
+
+** Limitations
+
+- Cannot share the same IP:port combination (standard TCP limitation)
+- All services sharing an IP must be in the CIDR range
+- The network interface address is added once per IP (not per service)
 
 * Configuration
 

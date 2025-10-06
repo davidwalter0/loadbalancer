@@ -118,6 +118,16 @@ func (mgr *Mgr) Set(Key string, ml *ManagedListener) {
 func (mgr *Mgr) Run() {
 	log.Println("LinkDefaultCIDR", ipmgr.DefaultCIDR)
 
+	// Label worker nodes if requested and we have a valid clientset
+	if mgr.EnvCfg.TagWorkerNodes && mgr.Clientset != nil {
+		log.Println("TagWorkerNodes is enabled, labeling nodes with worker role...")
+		if err := nodemgr.LabelWorkerNodes(mgr.Clientset); err != nil {
+			log.Printf("Warning: Failed to label worker nodes: %v", err)
+		}
+	} else if mgr.EnvCfg.TagWorkerNodes && mgr.Clientset == nil {
+		log.Println("TagWorkerNodes is enabled but no Kubernetes connection available, skipping node labeling")
+	}
+
 	listOpts := &metav1.ListOptions{LabelSelector: "node-role.kubernetes.io/worker"}
 
 	mgr.NodeWatcher = watch.NewQueueMgrListOpt(watch.NodeAPIName, mgr.Clientset, listOpts)

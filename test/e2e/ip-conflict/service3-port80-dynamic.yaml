@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-service-3
+  labels:
+    app: web-service-3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-service-3
+  template:
+    metadata:
+      labels:
+        app: web-service-3
+    spec:
+      containers:
+      - name: echo
+        image: hashicorp/http-echo:latest
+        args:
+        - "-text=Service 3 - Dynamic IP (different IP)"
+        ports:
+        - containerPort: 5678
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-service-3
+  labels:
+    app: web-service-3
+spec:
+  ports:
+  - port: 80
+    targetPort: 5678
+    protocol: TCP
+    name: http
+  selector:
+    app: web-service-3
+  type: LoadBalancer
+  # No loadBalancerIP specified - should get next available IP
