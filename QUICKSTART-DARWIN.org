@@ -1,0 +1,86 @@
+#+TITLE: Quick Start: LoadBalancer on macOS
+#+AUTHOR: David Walter
+#+DATE: 2025-10-03
+
+* One-Line Start
+
+#+BEGIN_SRC bash :tangle no
+./scripts/run-darwin.sh ~/.kube/config.k3d-dev
+#+END_SRC
+
+* Required: Label Worker Nodes
+
+The loadbalancer requires nodes to be labeled with =node-role.kubernetes.io/worker=:
+
+#+BEGIN_SRC bash :tangle no
+kubectl --kubeconfig ~/.kube/config.k3d-dev label nodes --all node-role.kubernetes.io/worker=true
+#+END_SRC
+
+*Without this label*, you'll see continuous "Node List is empty" messages in the logs.
+
+* Common Commands
+
+#+BEGIN_SRC bash :tangle no
+# View logs
+docker logs -f loadbalancer-dev
+
+# Stop
+docker stop loadbalancer-dev
+
+# Remove
+docker rm loadbalancer-dev
+
+# Restart
+docker restart loadbalancer-dev
+
+# Shell
+docker exec -it loadbalancer-dev bash
+#+END_SRC
+
+* Architecture Check
+
+#+BEGIN_SRC bash :tangle no
+# Host architecture
+uname -m
+
+# Container architecture
+docker run --rm davidwalter0/loadbalancer:latest sh -c 'uname -m'
+#+END_SRC
+
+* Manual Run (if script doesn't work)
+
+#+BEGIN_SRC bash :tangle no
+docker run -d \
+  --name loadbalancer-dev \
+  --network host \
+  --privileged \
+  -v $HOME/.kube/config.k3d-dev:/root/.kube/config:ro \
+  -e KUBECONFIG=/root/.kube/config \
+  -e KUBERNETES=true \
+  davidwalter0/loadbalancer:latest
+#+END_SRC
+
+* Rebuild Image
+
+#+BEGIN_SRC bash :tangle no
+# Clean and rebuild
+rm -f .dep/image-* .dep/tag-*
+make image
+
+# Verify
+docker images davidwalter0/loadbalancer
+#+END_SRC
+
+* Troubleshooting
+
+| Problem                      | Solution                                                                |
+|------------------------------+-------------------------------------------------------------------------|
+| "Operation not permitted"    | Add =--privileged= flag                                                 |
+| "Address already in use"     | Change =--restricted-cidr= or stop conflicting service                  |
+| "Kubeconfig not found"       | Check mount path: =-v $HOME/.kube/config:/root/.kube/config:ro=         |
+| "Node List is empty"         | Label nodes: =kubectl label nodes --all node-role.kubernetes.io/worker=true= |
+| Container exits immediately  | Check logs: =docker logs loadbalancer-dev=                              |
+
+* Full Documentation
+
+See [[file:README-DARWIN.org][README-DARWIN.org]] for complete details.

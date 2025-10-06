@@ -20,6 +20,7 @@ package ipmgr
 
 import (
 	"log"
+	"syscall"
 
 	"github.com/vishvananda/netlink"
 )
@@ -44,7 +45,7 @@ func LinkAddrList() (Addrs []netlink.Addr) {
 	if links, err := LinkList(); err == nil {
 		for _, linkName := range links {
 			link, _ := netlink.LinkByName(linkName.Attrs().Name)
-			if addrs, err := netlink.AddrList(link, netlink.FAMILY_ALL); err == nil {
+			if addrs, err := netlink.AddrList(link, syscall.AF_UNSPEC); err == nil {
 				for _, addr := range addrs {
 					Addrs = append(Addrs, addr)
 				}
@@ -57,7 +58,7 @@ func LinkAddrList() (Addrs []netlink.Addr) {
 // LinkAddrListByName addresses for one device for all address families
 func LinkAddrListByName(linkName string) (Addrs []netlink.Addr) {
 	if link, err := netlink.LinkByName(linkName); err == nil {
-		if addrs, err := netlink.AddrList(link, netlink.FAMILY_ALL); err == nil {
+		if addrs, err := netlink.AddrList(link, syscall.AF_UNSPEC); err == nil {
 			for _, addr := range addrs {
 				Addrs = append(Addrs, addr)
 			}
@@ -77,7 +78,7 @@ func LinkIPv4AddrListByName(linkName string) (Addrs []netlink.Addr) {
 		if Debug {
 			log.Println(link, err)
 		}
-		if addrs, err := netlink.AddrList(link, netlink.FAMILY_V4); err == nil {
+		if addrs, err := netlink.AddrList(link, syscall.AF_INET); err == nil {
 			if Debug {
 				log.Println(addrs, err)
 			}
@@ -97,7 +98,7 @@ func LinkIPv4AddrListByName(linkName string) (Addrs []netlink.Addr) {
 // LinkIPv6AddrListByName addresses for one device for ipv6
 func LinkIPv6AddrListByName(linkName string) (Addrs []netlink.Addr) {
 	if link, err := netlink.LinkByName(linkName); err == nil {
-		if addrs, err := netlink.AddrList(link, netlink.FAMILY_V6); err == nil {
+		if addrs, err := netlink.AddrList(link, syscall.AF_INET6); err == nil {
 			for _, addr := range addrs {
 				Addrs = append(Addrs, addr)
 			}

@@ -1,0 +1,348 @@
+#+TITLE: Multi-Architecture Support
+#+AUTHOR: David Walter
+#+DATE: 2025-10-03
+
+* Table of Contents :TOC:
+- [[#supported-architectures][Supported Architectures]]
+- [[#how-it-works][How It Works]]
+  - [[#build-time][Build Time]]
+  - [[#runtime][Runtime]]
+- [[#binary-layout][Binary Layout]]
+- [[#verification][Verification]]
+  - [[#check-architecture-detection][Check Architecture Detection]]
+  - [[#check-binary-symlinks][Check Binary Symlinks]]
+  - [[#check-both-binaries-exist][Check Both Binaries Exist]]
+- [[#benefits][Benefits]]
+  - [[#cross-platform-compatibility][Cross-Platform Compatibility]]
+  - [[#no-emulation-overhead][No Emulation Overhead]]
+  - [[#simplified-deployment][Simplified Deployment]]
+  - [[#developer-experience][Developer Experience]]
+- [[#size-comparison][Size Comparison]]
+- [[#building-multi-arch-images][Building Multi-Arch Images]]
+  - [[#local-build-single-architecture][Local Build (Single Architecture)]]
+  - [[#multi-platform-build-with-buildx][Multi-Platform Build with Buildx]]
+- [[#architecture-detection-logic][Architecture Detection Logic]]
+- [[#testing-different-architectures][Testing Different Architectures]]
+  - [[#test-on-current-platform][Test on Current Platform]]
+  - [[#force-specific-platform-with-docker][Force Specific Platform (with Docker)]]
+- [[#troubleshooting][Troubleshooting]]
+  - [[#wrong-architecture-selected][Wrong Architecture Selected]]
+  - [[#binary-not-found][Binary Not Found]]
+  - [[#performance-issues][Performance Issues]]
+- [[#future-enhancements][Future Enhancements]]
+- [[#implementation-details][Implementation Details]]
+  - [[#why-both-binaries][Why Both Binaries?]]
+  - [[#trade-offs][Trade-offs]]
+- [[#references][References]]
+
+* Supported Architectures
+
+- *amd64* (x86_64) - Intel/AMD 64-bit
+- *arm64* (aarch64) - ARM 64-bit (Apple Silicon, AWS Graviton, etc.)
+
+* How It Works
+
+** Build Time
+
+The Dockerfile builds binaries for *both* architectures during the build process:
+
+#+BEGIN_SRC dockerfile :tangle no
+# Build binaries for BOTH amd64 and arm64 architectures
+RUN mkdir -p bin/amd64 bin/arm64 && \
+    echo "Building for amd64..." && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=mod -o bin/amd64/loadbalancer && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=mod -o bin/amd64/ ./cmd/... && \
+    echo "Building for arm64..." && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -mod=mod -o bin/arm64/loadbalancer && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -mod=mod -o bin/arm64/ ./cmd/... && \
+    echo "Build complete for both architectures"
+#+END_SRC
+
+Both sets of binaries are copied to the final image:
+#+BEGIN_SRC dockerfile :tangle no
+COPY --from=builder /app/bin/amd64/ /usr/local/bin/amd64/
+COPY --from=builder /app/bin/arm64/ /usr/local/bin/arm64/
+#+END_SRC
+
+** Runtime
+
+The entrypoint script automatically detects the container's architecture and selects the correct binary:
+
+#+BEGIN_SRC bash :tangle no
+# Detect architecture and select correct binary
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64|amd64)
+    BINARY_ARCH="amd64"
+    ;;
+  aarch64|arm64)
+    BINARY_ARCH="arm64"
+    ;;
+  *)
+    echo "Warning: Unknown architecture '$ARCH', defaulting to amd64"
+    BINARY_ARCH="amd64"
+    ;;
+esac
+
+LOADBALANCER_BIN="/usr/local/bin/${BINARY_ARCH}/loadbalancer"
+#+END_SRC
+
+The script also creates symlinks for all utilities:
+#+BEGIN_SRC bash :tangle no
+# Create symlinks for all utilities so they're in PATH
+for bin in /usr/local/bin/${BINARY_ARCH}/*; do
+  if [ -f "$bin" ]; then
+    BASENAME=$(basename "$bin")
+    ln -sf "$bin" "/usr/local/bin/$BASENAME"
+  fi
+done
+#+END_SRC
+
+* Binary Layout
+
+After the entrypoint runs, the container has:
+
+#+BEGIN_SRC
+/usr/local/bin/
+├── amd64/
+│   ├── loadbalancer
+│   ├── findinterfaces
+│   ├── listinterfaces
+│   ├── getbestinterface
+│   ├── podwatch
+│   ├── nodes
+│   ├── pods
+│   ├── endpointwatch
+│   ├── servicewatch
+│   └── nodewatch
+├── arm64/
+│   ├── loadbalancer
+│   ├── findinterfaces
+│   └── ... (same as amd64)
+├── loadbalancer -> /usr/local/bin/{detected-arch}/loadbalancer
+├── findinterfaces -> /usr/local/bin/{detected-arch}/findinterfaces
+└── ... (symlinks to detected architecture)
+#+END_SRC
+
+* Verification
+
+** Check Architecture Detection
+
+#+BEGIN_SRC bash :tangle no
+docker logs loadbalancer-dev | grep "Detected architecture"
+#+END_SRC
+
+Output:
+#+BEGIN_SRC
+Detected architecture: x86_64 -> amd64
+Using loadbalancer binary: /usr/local/bin/amd64/loadbalancer
+#+END_SRC
+
+** Check Binary Symlinks
+
+#+BEGIN_SRC bash :tangle no
+docker exec loadbalancer-dev sh -c "ls -l /usr/local/bin/loadbalancer"
+#+END_SRC
+
+Output:
+#+BEGIN_SRC
+lrwxrwxrwx 1 root root 33 Oct  3 17:14 /usr/local/bin/loadbalancer -> /usr/local/bin/amd64/loadbalancer
+#+END_SRC
+
+** Check Both Binaries Exist
+
+#+BEGIN_SRC bash :tangle no
+docker exec loadbalancer-dev sh -c "ls -lh /usr/local/bin/*/loadbalancer"
+#+END_SRC
+
+Output:
+#+BEGIN_SRC
+-rwxr-xr-x 1 root root 57M Oct  3 17:11 /usr/local/bin/amd64/loadbalancer
+-rwxr-xr-x 1 root root 55M Oct  3 17:12 /usr/local/bin/arm64/loadbalancer
+#+END_SRC
+
+* Benefits
+
+** Cross-Platform Compatibility
+
+A single Docker image works on:
+- Intel/AMD Macs
+- Apple Silicon Macs (M1/M2/M3/M4)
+- Intel/AMD Linux servers
+- ARM Linux servers (AWS Graviton, Raspberry Pi, etc.)
+- Cloud platforms with mixed architectures
+
+** No Emulation Overhead
+
+The container always runs the native binary for its architecture, avoiding:
+- QEMU emulation slowdown
+- Compatibility issues
+- Increased memory usage
+
+** Simplified Deployment
+
+One image tag works everywhere:
+#+BEGIN_SRC bash :tangle no
+# Same command on any architecture
+docker run davidwalter0/loadbalancer:latest
+#+END_SRC
+
+** Developer Experience
+
+Developers on different machines (Intel Mac vs Apple Silicon Mac) use the same image and get native performance.
+
+* Size Comparison
+
+| Architecture | Binary Size |
+|--------------+-------------|
+| amd64        | 57 MB       |
+| arm64        | 55 MB       |
+| *Total*      | *112 MB*    |
+
+The image contains both binaries (~112 MB) but only one is used at runtime.
+
+* Building Multi-Arch Images
+
+** Local Build (Single Architecture)
+
+By default, =make image= builds for the host's architecture but includes both binaries:
+
+#+BEGIN_SRC bash :tangle no
+make image
+#+END_SRC
+
+This creates an image that works on any architecture because both binaries are included.
+
+** Multi-Platform Build with Buildx
+
+To build for multiple platforms simultaneously and push to a registry:
+
+#+BEGIN_SRC bash :tangle no
+# Create buildx builder
+docker buildx create --name multiplatform --use
+
+# Build and push for both platforms
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t davidwalter0/loadbalancer:latest \
+  --push \
+  .
+#+END_SRC
+
+* Architecture Detection Logic
+
+The entrypoint uses =uname -m= to detect architecture:
+
+| =uname -m= output | Detected As | Binary Used        |
+|-------------------+-------------+--------------------|
+| x86_64            | amd64       | amd64/loadbalancer |
+| amd64             | amd64       | amd64/loadbalancer |
+| aarch64           | arm64       | arm64/loadbalancer |
+| arm64             | arm64       | arm64/loadbalancer |
+| *other*           | amd64       | amd64/loadbalancer |
+
+* Testing Different Architectures
+
+** Test on Current Platform
+
+#+BEGIN_SRC bash :tangle no
+./scripts/run-darwin.sh ~/.kube/config
+#+END_SRC
+
+** Force Specific Platform (with Docker)
+
+#+BEGIN_SRC bash :tangle no
+# Force amd64 (with emulation if on arm64)
+docker run --platform linux/amd64 davidwalter0/loadbalancer:latest
+
+# Force arm64 (with emulation if on amd64)
+docker run --platform linux/arm64 davidwalter0/loadbalancer:latest
+#+END_SRC
+
+* Troubleshooting
+
+** Wrong Architecture Selected
+
+*Problem*: Container uses wrong architecture binary
+
+*Diagnosis*:
+#+BEGIN_SRC bash :tangle no
+docker exec loadbalancer-dev uname -m
+docker logs loadbalancer-dev | grep "Detected architecture"
+#+END_SRC
+
+*Cause*: The =uname -m= output doesn't match expected values
+
+*Solution*: Update the case statement in =scripts/entrypoint.sh= to handle the specific output
+
+** Binary Not Found
+
+*Problem*: "Binary not found or not executable"
+
+*Diagnosis*:
+#+BEGIN_SRC bash :tangle no
+docker exec loadbalancer-dev ls -la /usr/local/bin/*/loadbalancer
+#+END_SRC
+
+*Cause*: Build didn't complete for both architectures
+
+*Solution*: Rebuild image:
+#+BEGIN_SRC bash :tangle no
+rm -f .dep/image-* .dep/tag-*
+make image
+#+END_SRC
+
+** Performance Issues
+
+*Problem*: Container runs slowly
+
+*Diagnosis*:
+#+BEGIN_SRC bash :tangle no
+# Check if emulation is being used
+docker exec loadbalancer-dev sh -c "uname -m && cat /proc/cpuinfo | head -20"
+#+END_SRC
+
+*Cause*: Running under emulation (e.g., arm64 image on amd64 host)
+
+*Solution*: Use native architecture or rebuild image to ensure both binaries are present
+
+* Future Enhancements
+
+Potential improvements:
+
+1. *Additional Architectures*: Add arm/v7 for 32-bit ARM
+2. *Separate Images*: Build architecture-specific images if size becomes an issue
+3. *Manifest Lists*: Use Docker manifest to automatically select the right image
+4. *Build Caching*: Optimize build time by caching Go modules per architecture
+
+* Implementation Details
+
+** Why Both Binaries?
+
+Including both binaries allows:
+- A single image tag that works everywhere
+- No need for architecture-specific tags
+- Simplified deployment scripts
+- No reliance on manifest lists or registry support
+
+** Trade-offs
+
+*Pros*:
+- Universal compatibility
+- Simple deployment
+- No registry manifest support needed
+- Works offline/air-gapped
+
+*Cons*:
+- Larger image size (~112 MB vs ~57 MB for single arch)
+- Slightly longer build time
+- Unused binary takes space
+
+The trade-off is worthwhile for the operational simplicity it provides.
+
+* References
+
+- [[file:Dockerfile][Dockerfile]] - Build configuration
+- [[file:scripts/entrypoint.sh][scripts/entrypoint.sh]] - Architecture detection
+- [[file:README-DARWIN.org][README-DARWIN.org]] - macOS-specific instructions
+- [[https://docs.docker.com/buildx/working-with-buildx/][Docker Buildx Documentation]]

@@ -1,0 +1,400 @@
+#+TITLE: Running LoadBalancer on macOS (Darwin)
+#+AUTHOR: David Walter
+#+DATE: 2025-10-03
+
+* Table of Contents :TOC:
+- [[#prerequisites][Prerequisites]]
+- [[#architecture-support][Architecture Support]]
+  - [[#verify-architecture][Verify Architecture]]
+- [[#quick-start][Quick Start]]
+  - [[#required-label-worker-nodes-first][Required: Label Worker Nodes First]]
+  - [[#using-the-helper-script-recommended][Using the Helper Script (Recommended)]]
+  - [[#manual-docker-run][Manual Docker Run]]
+- [[#important-why---privileged-is-required][Important: Why --privileged is Required]]
+  - [[#alternative-less-secure][Alternative (Less Secure)]]
+- [[#container-management][Container Management]]
+  - [[#view-logs][View Logs]]
+  - [[#stop-container][Stop Container]]
+  - [[#remove-container][Remove Container]]
+  - [[#get-a-shell][Get a Shell]]
+  - [[#restart-container][Restart Container]]
+- [[#configuration][Configuration]]
+  - [[#environment-variables][Environment Variables]]
+  - [[#command-line-flags][Command Line Flags]]
+- [[#network-interfaces][Network Interfaces]]
+- [[#troubleshooting][Troubleshooting]]
+  - [[#operation-not-permitted-error]["Operation not permitted" Error]]
+  - [[#address-already-in-use-error]["Address already in use" Error]]
+  - [[#kubeconfig-not-found][Kubeconfig Not Found]]
+  - [[#cannot-connect-to-kubernetes][Cannot Connect to Kubernetes]]
+- [[#building-from-source][Building from Source]]
+  - [[#build-native-image][Build Native Image]]
+  - [[#build-multi-architecture-images][Build Multi-Architecture Images]]
+  - [[#verify-build-architecture][Verify Build Architecture]]
+- [[#how-it-works][How It Works]]
+- [[#example-k3d-cluster][Example: K3D Cluster]]
+- [[#differences-from-linux][Differences from Linux]]
+  - [[#what-works-differently-on-macos][What Works Differently on macOS]]
+  - [[#limitations][Limitations]]
+- [[#best-practices][Best Practices]]
+- [[#see-also][See Also]]
+
+* Prerequisites
+
+- Docker Desktop or Rancher Desktop installed on macOS
+- A Kubernetes cluster (k3d, kind, or remote cluster)
+- Valid kubeconfig file
+
+* Architecture Support
+
+The Dockerfile now supports multi-architecture builds:
+- *arm64* (Apple Silicon M1/M2/M3/M4)
+- *amd64* (Intel Macs)
+
+The build automatically detects your architecture using Docker buildx =TARGETARCH= argument.
+
+** Verify Architecture
+
+Check your system:
+#+BEGIN_SRC bash :tangle no
+uname -m  # arm64 for Apple Silicon, x86_64 for Intel
+#+END_SRC
+
+Check container architecture:
+#+BEGIN_SRC bash :tangle no
+docker run --rm --entrypoint /bin/sh davidwalter0/loadbalancer:latest -c "uname -m"
+#+END_SRC
+
+* Quick Start
+
+** Required: Label Worker Nodes First
+
+The loadbalancer requires Kubernetes nodes to be labeled with =node-role.kubernetes.io/worker=:
+
+#+BEGIN_SRC bash :tangle no
+# For k3d clusters
+kubectl --kubeconfig ~/.kube/config.k3d-dev label nodes --all node-role.kubernetes.io/worker=true
+
+# Or with default kubeconfig
+kubectl label nodes --all node-role.kubernetes.io/worker=true
+#+END_SRC
+
+*Why this is needed:* The loadbalancer watches for worker nodes to determine endpoints for service routing.
+
+*Symptom if missing:* Continuous "Node List is empty, sleep a bit" messages in logs.
+
+** Using the Helper Script (Recommended)
+
+The easiest way to run on macOS:
+
+#+BEGIN_SRC bash :tangle no
+./scripts/run-darwin.sh ~/.kube/config.k3d-dev
+#+END_SRC
+
+Or with default kubeconfig:
+#+BEGIN_SRC bash :tangle no
+./scripts/run-darwin.sh
+#+END_SRC
+
+With additional arguments:
+#+BEGIN_SRC bash :tangle no
+./scripts/run-darwin.sh ~/.kube/config.k3d-dev --debug --link-device eth0
+#+END_SRC
+
+** Manual Docker Run
+
+If you prefer to run docker commands directly:
+
+#+BEGIN_SRC bash :tangle no
+docker run -d \
+  --name loadbalancer-dev \
+  --network host \
+  --privileged \
+  -v $HOME/.kube/config.k3d-dev:/root/.kube/config:ro \
+  -e KUBECONFIG=/root/.kube/config \
+  -e KUBERNETES=true \
+  davidwalter0/loadbalancer:latest
+#+END_SRC
+
+* Important: Why --privileged is Required
+
+On macOS Docker, the container needs =--privileged= mode because:
+
+1. *Linux Capabilities Don't Work*: The =setcap= command in the Dockerfile that sets network capabilities (CAP_NET_ADMIN, CAP_NET_RAW, CAP_NET_BIND_SERVICE) doesn't work properly in macOS Docker environment.
+
+2. *Network Management*: The loadbalancer needs to:
+   - Add/remove IP addresses to network interfaces
+   - Bind to privileged ports (< 1024)
+   - Manage network routing
+
+** Alternative (Less Secure)
+
+If you don't want to use =--privileged=, you can try:
+
+#+BEGIN_SRC bash :tangle no
+docker run -d \
+  --name loadbalancer-dev \
+  --network host \
+  --cap-add=NET_ADMIN \
+  --cap-add=NET_RAW \
+  --cap-add=NET_BIND_SERVICE \
+  -v $HOME/.kube/config:/root/.kube/config:ro \
+  -e KUBECONFIG=/root/.kube/config \
+  davidwalter0/loadbalancer:latest
+#+END_SRC
+
+However, this may still fail on macOS Docker due to how it handles Linux capabilities.
+
+* Container Management
+
+** View Logs
+#+BEGIN_SRC bash :tangle no
+docker logs -f loadbalancer-dev
+#+END_SRC
+
+** Stop Container
+#+BEGIN_SRC bash :tangle no
+docker stop loadbalancer-dev
+#+END_SRC
+
+** Remove Container
+#+BEGIN_SRC bash :tangle no
+docker rm loadbalancer-dev
+#+END_SRC
+
+** Get a Shell
+#+BEGIN_SRC bash :tangle no
+docker exec -it loadbalancer-dev bash
+#+END_SRC
+
+** Restart Container
+#+BEGIN_SRC bash :tangle no
+docker restart loadbalancer-dev
+#+END_SRC
+
+* Configuration
+
+** Environment Variables
+
+- =KUBECONFIG=: Path to kubeconfig file (inside container)
+- =KUBERNETES=: Enable Kubernetes integration (default: true)
+- =DEBUG=: Enable debug logging (default: false)
+- =LINK_DEVICE=: Network interface to use (default: auto-detect)
+- =RESTRICTED_CIDR=: IP pool CIDR range (default: 192.168.0.224/28)
+
+** Command Line Flags
+
+All environment variables can also be set via command line flags:
+
+#+BEGIN_SRC bash :tangle no
+docker run --privileged \
+  -v $HOME/.kube/config:/root/.kube/config:ro \
+  davidwalter0/loadbalancer:latest \
+  --kubeconfig=/root/.kube/config \
+  --kubernetes \
+  --debug \
+  --link-device=eth0 \
+  --restricted-cidr=192.168.0.224/28
+#+END_SRC
+
+* Network Interfaces
+
+The loadbalancer will auto-detect the best network interface. On macOS Docker, typical interfaces are:
+
+- =eth0= - Primary container network (usually auto-selected)
+- =docker0= - Docker bridge network
+- =rd0=, =rd1= - Rancher Desktop networks
+
+To see available interfaces:
+#+BEGIN_SRC bash :tangle no
+docker exec loadbalancer-dev ip addr show
+#+END_SRC
+
+* Troubleshooting
+
+** "Operation not permitted" Error
+
+*Problem*: Container exits with "Operation not permitted"
+
+*Solution*: Add =--privileged= flag to docker run command
+
+#+BEGIN_SRC bash :tangle no
+docker run --privileged ...
+#+END_SRC
+
+** "Address already in use" Error
+
+*Problem*: LoadBalancer can't bind to IP:Port
+
+*Cause*: Another service or loadbalancer instance is using that address
+
+*Solution*:
+1. Check what's using the port: =lsof -i :8080=
+2. Stop conflicting service
+3. Or adjust the =--restricted-cidr= to use different IP range
+
+** Kubeconfig Not Found
+
+*Problem*: "No kubeconfig found in standard locations"
+
+*Solution*: Ensure kubeconfig is mounted correctly
+
+#+BEGIN_SRC bash :tangle no
+# Verify file exists on host
+ls -la ~/.kube/config.k3d-dev
+
+# Mount it correctly
+docker run -v $HOME/.kube/config.k3d-dev:/root/.kube/config:ro ...
+#+END_SRC
+
+** Cannot Connect to Kubernetes
+
+*Problem*: "Failed to connect to Kubernetes API"
+
+*Solution*:
+1. Test kubeconfig works on host:
+   #+BEGIN_SRC bash :tangle no
+   kubectl --kubeconfig ~/.kube/config.k3d-dev get nodes
+   #+END_SRC
+
+2. Check cluster endpoint is accessible from container:
+   #+BEGIN_SRC bash :tangle no
+   docker exec loadbalancer-dev kubectl get nodes
+   #+END_SRC
+
+3. For k3d clusters, ensure the endpoint is not localhost:
+   #+BEGIN_SRC bash :tangle no
+   # View kubeconfig server
+   grep server ~/.kube/config.k3d-dev
+   #+END_SRC
+
+* Building from Source
+
+** Build Native Image
+
+Build for your current architecture:
+
+#+BEGIN_SRC bash :tangle no
+make image
+#+END_SRC
+
+** Build Multi-Architecture Images
+
+Build for both arm64 and amd64:
+
+#+BEGIN_SRC bash :tangle no
+docker buildx create --name multiplatform --use
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t davidwalter0/loadbalancer:latest \
+  --push .
+#+END_SRC
+
+** Verify Build Architecture
+
+#+BEGIN_SRC bash :tangle no
+# Check local binary
+file bin/loadbalancer
+
+# Check container binary
+docker run --rm --entrypoint /bin/sh davidwalter0/loadbalancer:latest \
+  -c "uname -m"
+#+END_SRC
+
+* How It Works
+
+1. *Interface Detection*: Auto-detects best network interface or uses specified device
+2. *Kubernetes Watch*: Watches services with =Type: LoadBalancer=
+3. *IP Allocation*: Allocates IPs from configured CIDR pool
+4. *Address Management*: Adds IPs to network interface
+5. *Port Binding*: Creates listeners on allocated IP:Port
+6. *Traffic Forwarding*: Forwards connections to Kubernetes service endpoints
+7. *Health Checking*: Monitors endpoint health
+8. *Cleanup*: Removes IPs when services are deleted
+
+* Example: K3D Cluster
+
+Complete example with k3d:
+
+#+BEGIN_SRC bash :tangle no
+# Create k3d cluster
+k3d cluster create dev
+
+# Label worker nodes
+kubectl --kubeconfig ~/.kube/config.k3d-dev label nodes --all node-role.kubernetes.io/worker=true
+
+# Build loadbalancer image
+make image
+
+# Run loadbalancer
+./scripts/run-darwin.sh ~/.kube/config.k3d-dev
+
+# Create a LoadBalancer service
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-nginx
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    app: nginx
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+EOF
+
+# Watch loadbalancer allocate IP
+docker logs -f loadbalancer-dev
+
+# Test access (check logs for allocated IP)
+curl http://192.168.0.225
+#+END_SRC
+
+* Differences from Linux
+
+** What Works Differently on macOS
+
+1. *Privileged Mode Required*: Linux capabilities don't work in macOS Docker
+2. *Network Interfaces*: Different interface names (eth0 vs host interfaces)
+3. *Host Networking*: =--network host= works differently on macOS
+4. *IP Routing*: External IPs may not be directly routable from macOS host
+
+** Limitations
+
+- IPs allocated inside container may not be directly accessible from macOS host
+- Some advanced networking features may behave differently
+- Performance may be impacted by virtualization layer
+
+* Best Practices
+
+1. *Use Helper Script*: The =run-darwin.sh= script handles all the quirks
+2. *Mount Kubeconfig Read-Only*: Use =:ro= flag for security
+3. *Check Logs*: Monitor logs during startup for issues
+4. *Clean Up*: Remove stopped containers to avoid conflicts
+5. *Use Named Containers*: Easier to manage and reference
+
+* See Also
+
+- [[file:README.org][README.org]] - General documentation
+- [[file:TODO.org][TODO.org]] - Planned features
+- [[file:examples/][examples/]] - Configuration examples
