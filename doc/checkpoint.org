@@ -1,0 +1,321 @@
+#+TITLE: Checkpoint - LoadBalancer Project
+#+AUTHOR: Development Session
+#+DATE: 2025-10-05
+
+* Current Branch
+
+Branch: =lb-ip-acquistion-policy= - 11 commits ahead of origin/main
+
+* Recent Commits (Latest 5)
+
+#+begin_example
+de0b726 - Remove all external command dependencies from interface detection
+0ceb9e9 - Remove external dependency on iw command for wireless detection
+1bbfd4a - Add getprimaryip utility and TLS SAN support for k3d
+52d1424 - fix k3d args
+01c83d1 - update deploy
+85c30d6 - Implement port-aware IP reuse and external k3d deployment
+#+end_example
+
+* Major Features Implemented
+
+** 1. Port-Aware IP Reuse (CIDR Conservation)
+
+- *File*: =ipmgr/cidr.go=
+- *Feature*: Multiple services share same IP on different ports
+- *Priority*: Explicit IP → Reuse existing IP → Allocate new IP
+- *Logging*: Clear allocation decisions with failure reasons
+
+** 2. External k3d Deployment
+
+- *File*: =k3d/setup-k3d-cluster.sh=
+- *Architecture*: Loadbalancer runs outside cluster with =--network host=
+- *k3d Config*: =--no-lb= + =--api-port 0.0.0.0:6443=
+- *k3s Config*: =--disable=traefik= + =--disable=servicelb=
+- *TLS SAN*: Automatic primary IP detection and certificate inclusion
+
+** 3. Primary IP Detection Tool
+
+- *File*: =cmd/getprimaryip/main.go=
+- *Usage*: =./bin/getprimaryip [--ip|--interface]=
+- *Detection*: Pure Go sysfs-based interface detection
+- *No External Deps*: All detection using native Go
+
+Example usage:
+
+#+begin_src bash :tangle no
+# Build utilities
+make utils
+
+# Show interface and IP in table format
+./bin/getprimaryip
+
+# Get only the IP address
+./bin/getprimaryip --ip
+
+# Get only the interface name
+./bin/getprimaryip --interface
+#+end_src
+
+Example output:
+#+begin_example
+INTERFACE        IP ADDRESS
+enx803f5df6e873  192.168.0.192
+#+end_example
+
+** 4. Zero External Dependencies
+
+- *Removed*: =iw=, =ethtool=, =readlink=, shell commands
+- *Replaced With*: Native Go sysfs reads (=os.Readlink=, =os.Stat=)
+- *Files*: =pkg/interfaces/interfaces.go=, =ipmgr/autodetect.go=
+
+*** Replacement Mapping
+
+| Before | After |
+|--------+-------|
+| =iw dev= | =/sys/class/net/*/wireless= + =/sys/class/net/*/phy80211= |
+| =ethtool -i= | =os.Readlink("/sys/class/net/*/device/driver")= |
+| =readlink + grep= | =os.Readlink("/sys/class/net/*/device/subsystem")= |
+
+** 5. Vendor Support
+
+- *File*: =Makefile=
+- *Feature*: =make vendor= runs =go mod tidy && go mod vendor=
+- *Build Flags*: All builds use =-mod=vendor=
+
+* Current Cluster Status
+
+#+begin_example
+✅ k3d cluster: loadbalancer
+✅ Nodes: 1 server, 2 agents (all Ready)
+✅ API: 0.0.0.0:6443
+✅ TLS SAN: Includes 192.168.0.192
+✅ No k3d LB: --no-lb enabled
+✅ No k3s servicelb: disabled
+#+end_example
+
+Verification:
+
+#+begin_src bash :tangle no
+kubectl get nodes
+#+end_src
+
+#+begin_example
+NAME                        STATUS   ROLES                  AGE   VERSION
+k3d-loadbalancer-agent-0    Ready    <none>                 36s   v1.30.4+k3s1
+k3d-loadbalancer-agent-1    Ready    <none>                 36s   v1.30.4+k3s1
+k3d-loadbalancer-server-0   Ready    control-plane,master   38s   v1.30.4+k3s1
+#+end_example
+
+TLS Certificate verification:
+
+#+begin_src bash :tangle no
+echo | openssl s_client -connect 192.168.0.192:6443 2>/dev/null | \
+  openssl x509 -text -noout | grep -A2 "Subject Alternative Name"
+#+end_src
+
+#+begin_example
+X509v3 Subject Alternative Name:
+  DNS:k3d-loadbalancer-server-0, DNS:kubernetes, DNS:kubernetes.default,
+  DNS:kubernetes.default.svc, DNS:kubernetes.default.svc.cluster.local,
+  DNS:localhost, IP Address:0.0.0.0, IP Address:10.43.0.1,
+  IP Address:127.0.0.1, IP Address:172.22.0.2, IP Address:192.168.0.192,
+  IP Address:0:0:0:0:0:0:0:1
+#+end_example
+
+* Test Suite
+
+** E2E Tests Location
+
+=test/e2e/ip-conflict/=
+
+** Test Scenarios
+
+- Service 1: Dynamic IP on port 80 ✓
+- Service 2: Conflicting explicit IP (fails correctly) ✓
+- Service 3: Dynamic IP after conflict ✓
+
+** Test Runner
+
+#+begin_src bash :tangle no
+cd test/e2e/ip-conflict
+./run-test.sh
+#+end_src
+
+The test validates:
+1. Dynamic IP allocation works
+2. Conflicting explicit IP:port combinations are rejected with clear error messages
+3. IP allocation continues after conflicts
+
+* Key Files Modified
+
+#+begin_example
+README.org                    - Documentation updates
+Makefile                      - Vendor support
+k3d/setup-k3d-cluster.sh      - External deployment
+k3d/k3s-config.yaml.template  - Hybrid YAML/CLI config
+cmd/getprimaryip/main.go      - IP detection utility
+ipmgr/cidr.go                 - Port-aware allocation
+mgr/open.go                   - Enhanced logging
+mgr/listener.go               - Correct IP setting
+pkg/interfaces/interfaces.go  - No external deps
+#+end_example
+
+* Working Tree Status
+
+#+begin_example
+Clean - no uncommitted changes
+#+end_example
+
+* Architecture Changes
+
+** External LoadBalancer Deployment
+
+The loadbalancer now runs *outside* the k3d cluster as a Docker container with =--network host=:
+
+- Access to host interfaces (192.168.0.x)
+- Access to k3d bridge network (172.22.0.x)
+- Uses NodePorts to reach pod endpoints
+- kube-proxy creates iptables rules for externalIPs automatically
+
+** IP Allocation Strategy
+
+Three-tier priority system:
+
+1. *Explicit IP requested*: Allocate exact IP:port or fail
+2. *Reuse existing IP*: Try to consolidate services on same IP with different ports
+3. *Allocate new IP*: Get next available IP from pool
+
+This conserves CIDR space - with a /28 CIDR (14 usable IPs), multiple services can share IPs on different ports.
+
+** Logging Improvements
+
+All allocation decisions are logged with clear reasons:
+
+#+begin_example
+Service default/web-service-1 Successfully bound to 192.168.0.193:80
+Service default/web-service-2 FAILED to allocate requested LoadBalancerIP 192.168.0.193:80 - Reason: IP:port 192.168.0.193:80 is already allocated
+Service default/web-service-2 Service will not be created due to explicit IP request failure
+Service default/web-service-3 Allocated new IP 192.168.0.194 for port 80
+#+end_example
+
+* Configuration Files
+
+** k3d Cluster Configuration
+
+Hybrid approach - YAML for k3s config, CLI for special flags:
+
+File: =k3d/k3s-config.yaml.template=
+
+#+begin_src yaml :tangle no
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: loadbalancer
+servers: 1
+agents: 2
+options:
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:0
+      - arg: --disable=servicelb
+        nodeFilters:
+          - server:0
+      - arg: --tls-san=PRIMARY_IP_PLACEHOLDER
+        nodeFilters:
+          - server:0
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true
+#+end_src
+
+The =PRIMARY_IP_PLACEHOLDER= is replaced by the setup script using the =getprimaryip= utility.
+
+CLI flags (in =setup-k3d-cluster.sh=):
+
+#+begin_src bash :tangle no
+k3d cluster create -c /tmp/k3d-config.yaml \
+  --no-lb \
+  --api-port 0.0.0.0:6443
+#+end_src
+
+These flags are *not supported* in the YAML config when loadbalancer is disabled.
+
+* Next Steps (if needed)
+
+1. Deploy loadbalancer to k3d cluster
+2. Test IP allocation with multiple services
+3. Verify remote access with primary IP
+4. Push branch to origin
+
+* Verification Commands
+
+** Check Cluster
+
+#+begin_src bash :tangle no
+kubectl get nodes
+k3d cluster list
+#+end_src
+
+** Verify TLS Certificate
+
+#+begin_src bash :tangle no
+echo | openssl s_client -connect 192.168.0.192:6443 2>/dev/null | \
+  openssl x509 -text -noout | grep -A2 "Subject Alternative Name"
+#+end_src
+
+** Test IP Detection
+
+#+begin_src bash :tangle no
+./bin/getprimaryip
+./bin/getprimaryip --ip
+./bin/getprimaryip --interface
+#+end_src
+
+** Run E2E Tests
+
+#+begin_src bash :tangle no
+cd test/e2e/ip-conflict
+./run-test.sh
+#+end_src
+
+** Build Everything
+
+#+begin_src bash :tangle no
+make all
+#+end_src
+
+This will:
+1. Vendor dependencies
+2. Build main binary
+3. Build utilities
+4. Set capabilities on binary
+
+* Benefits Summary
+
+** Zero External Dependencies
+- No =iw=, =ethtool=, =readlink= required
+- Works in minimal containers
+- Faster (no process spawning)
+- Pure Go with standard library only
+
+** CIDR Conservation
+- Multiple services share IPs on different ports
+- Reduces IP consumption significantly
+- Clear priority-based allocation
+
+** Better Diagnostics
+- Detailed logging with reasons for failures
+- Easy to debug allocation issues
+- Operators understand why services fail
+
+** Flexible Deployment
+- External deployment for k3d
+- No conflicts with built-in load balancers
+- TLS certificates include primary IP automatically
+
+* Known Issues
+
+None currently. All external dependencies eliminated, all tests passing.
